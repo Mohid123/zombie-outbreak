@@ -20,11 +20,20 @@ export const variantType = {
 } as const;
 
 export interface cityEntity {
-    name: string;
-    displayName: string;
-    center: [number, number];
-    bbox: [number, number, number, number];
-    totalPopulation: number;
+  name: string;
+  displayName: string;
+  center: [number, number];
+  bbox: [number, number, number, number];
+  totalPopulation: number;
+}
+
+export interface userProfileEntity {
+  city: cityEntity;
+  fitness: string;
+  vehicle: boolean;
+  buildingType: string;
+  socialBehavior: string;
+  preparedness: string;
 }
 
 export type StatusConstant = (typeof statusConstant)[keyof typeof statusConstant];
