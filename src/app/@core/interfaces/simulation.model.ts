@@ -25,10 +25,16 @@ export interface SimStats {
   hoursElapsed:    number;
 }
 
+export interface SpreadEvent {
+  fromCenter: [number, number];
+  toCenter:   [number, number];
+}
+
 export interface TickResult {
-  updatedCells: SimCell[];
-  stats:        SimStats;
-  tick:         number;
+  updatedCells:  SimCell[];
+  spreadEvents:  SpreadEvent[];
+  stats:         SimStats;
+  tick:          number;
 }
 
 // Messages FROM main thread TO worker

@@ -1,0 +1,108 @@
+:host { display: block; width: 100vw; height: 100vh; }
+
+.intro-root {
+  width: 100%; height: 100%;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  outline: none;
+}
+
+/* Grain / noise */
+.noise {
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  opacity: .035;
+  animation: static-noise 0.08s steps(1) infinite;
+  pointer-events: none;
+}
+
+.scanlines {
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255,0,60,0.022) 0px,
+    rgba(255,0,60,0.022) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  animation: scanlines-drift 6s linear infinite;
+  pointer-events: none;
+}
+
+.content {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 18px;
+  text-align: center;
+  padding: 40px;
+}
+
+.ebs-header {
+  font-family: var(--font-hud);
+  font-size: clamp(11px, 1.8vw, 15px);
+  letter-spacing: 0.25em;
+  color: rgba(255,200,0,0.9);
+  text-shadow: 0 0 12px rgba(255,200,0,0.6);
+  animation: flicker 3s infinite;
+}
+
+.divider {
+  width: min(480px, 80vw); height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,0,60,0.7), transparent);
+}
+
+.not-a-test {
+  font-family: var(--font-title);
+  font-size: clamp(28px, 5vw, 52px);
+  letter-spacing: 0.18em;
+  color: #fff;
+  text-shadow: 0 0 30px rgba(255,255,255,0.3);
+}
+
+.outbreak-line {
+  font-family: var(--font-title);
+  font-size: clamp(52px, 10vw, 108px);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  background: linear-gradient(135deg, #ff003c 0%, #cc0030 40%, #ff003c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  filter: drop-shadow(0 0 24px rgba(255,0,60,0.7));
+}
+
+.sub-line {
+  font-family: var(--font-mono);
+  font-size: clamp(9px, 1.4vw, 12px);
+  letter-spacing: 0.2em;
+  color: rgba(255, 80, 100, 0.65);
+}
+
+.select-city {
+  font-family: var(--font-title);
+  font-size: clamp(22px, 4vw, 42px);
+  letter-spacing: 0.22em;
+  color: rgba(255,255,255,0.9);
+  text-shadow: 0 0 20px rgba(255,0,60,0.4);
+}
+
+.click-prompt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgba(255,100,120,0.6);
+  animation: blink 1.2s step-end infinite;
+  margin-top: 8px;
+}
+
+/* Glitch bar — fires occasionally via CSS */
+.glitch-overlay {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: rgba(255,0,60,0.04);
+  animation: glitch-h 7s steps(1) infinite;
+}

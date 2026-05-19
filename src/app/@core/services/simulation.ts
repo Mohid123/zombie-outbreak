@@ -104,8 +104,12 @@ export class SimulationService implements OnDestroy {
   private handleWorkerMessage(msg: WorkerResponse): void {
     switch (msg.type) {
       case 'INIT_COMPLETE': {
-        // Worker is ready — waiting for start() to be called
-        this.state.setStatus(statusConstant.configuring);
+        // Only drop to configuring if start() hasn't already been called.
+        // map-shell calls init() then start() synchronously, so the worker's
+        // async reply arrives after running is already set — don't clobber it.
+        if (!this.state.isRunning()) {
+          this.state.setStatus(statusConstant.configuring);
+        }
         break;
       }
 

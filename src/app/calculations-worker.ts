@@ -5,6 +5,7 @@ import {
   CellStatus,
   SimCell,
   SimStats,
+  SpreadEvent,
   TickResult,
   WorkerMessage,
   WorkerResponse,
@@ -32,17 +33,24 @@ let variant: ZombieVariant = 'standard';
 let tickCount = 0;
 let isRunning = false;
 
-//Greek letter constants
-const GAMMA = 0.15; // I to Z conversion rate per tick
-const DELTA = 0.05; // Z destroyed by humans per tick
-const MU = 0.08; // S killed outright by Z per tick
+// Per-simulation wind vector (radians) — gives the spread a coherent direction
+// instead of perfectly radial growth. Magnitude controls bias strength.
+let windAngle = 0;
+let windStrength = 0.18;
 
-//Variant ring sizes
+// SIZD rates — tuned so cells spend many ticks as "infected" before becoming "overrun"
+const GAMMA = 0.06; // I→Z conversion: slow, creates long infected phase
+const DELTA = 0.03; // Z killed by humans: low, zombies persist
+const MU    = 0.05; // S killed outright: moderate
+
 const VARIANT_RING: Record<ZombieVariant, number> = {
   standard: 1,
   fast: 2,
   horde: 1,
 };
+
+// Panic-flight long-jump — slightly higher to seed distant outbreaks (city coverage)
+const LONG_JUMP_BASE_P = 0.022;
 
 //Message handler
 addEventListener('message', ({ data }: MessageEvent<WorkerMessage>) => {
@@ -54,14 +62,22 @@ addEventListener('message', ({ data }: MessageEvent<WorkerMessage>) => {
       tickCount = 0;
       isRunning = true;
 
-      // Place Patient Zero
+      // Pick a wind direction so the spread leans one way — feels less like
+      // a perfect circle, more like a real outbreak chasing transit + weather.
+      windAngle = rng() * Math.PI * 2;
+      windStrength = 0.14 + rng() * 0.10;
+
+      // Place Patient Zero — seed enough zombies to clear the overrun threshold
+      // quickly so SIZD has traction from tick 1.
       const pzCell = data.payload.patientZeroCell;
       if (pzCell && grid.has(pzCell)) {
         const cell = grid.get(pzCell)!;
+        const pop = Math.max(cell.population, 20);
+        cell.zombie    = Math.max(10, Math.floor(pop * 0.15));
+        cell.infected  = Math.max(10, Math.floor(pop * 0.05));
+        cell.susceptible = Math.max(0, pop - cell.zombie - cell.infected);
         cell.status = 'infected';
-        cell.infected = Math.max(1, Math.floor(cell.population * 0.01));
-        cell.zombie = 1;
-        cell.susceptible = cell.population - cell.infected - 1;
+        cell.infectedAtTick = 0;
       }
 
       const response: WorkerResponse = { type: 'INIT_COMPLETE' };
@@ -110,11 +126,19 @@ addEventListener('message', ({ data }: MessageEvent<WorkerMessage>) => {
 //Core tick computation
 function computeTick(): TickResult {
   const dirtyCellIds = new Set<string>();
+  const spreadEvents: SpreadEvent[] = [];
 
   // Step 1 — Spread to neighbors from all active cells
   for (const [cellId, cell] of grid) {
     if (cell.status !== 'infected' && cell.status !== 'overrun') continue;
     if (cell.zombie <= 0) continue;
+
+    // Maturity gate — a freshly-infected cell is mostly incubating and
+    // spreads sluggishly; cells that have brewed a few ticks erupt outward.
+    // This staggers the wavefront so growth pulses instead of marching uniformly.
+    const ticksInfected = tickCount - (cell.infectedAtTick ?? tickCount);
+    const maturity = Math.min(1, ticksInfected / 4); // 0 → 1 over ~4 ticks
+    const maturityFactor = 0.25 + 0.75 * maturity;
 
     const ringSize = VARIANT_RING[variant];
     const neighborIds = h3.gridDisk(cellId, ringSize).filter((id) => id !== cellId);
@@ -124,16 +148,31 @@ function computeTick(): TickResult {
       if (!neighbor || neighbor.status !== 'clean') continue;
       if (neighbor.population <= 0) continue;
 
-      const p = spreadProbability(cell, neighbor);
+      const p = spreadProbability(cell, neighbor) * maturityFactor;
 
       if (rng() < p) {
-        // Infect the neighbor — seed it with a small initial zombie count
-        neighbor.zombie = 1;
-        neighbor.infected = Math.max(1, Math.floor(neighbor.population * 0.005));
-        neighbor.susceptible = neighbor.population - neighbor.infected - 1;
-        neighbor.status = 'infected';
-        neighbor.infectedAtTick = tickCount;
+        infectCell(neighbor, 0.005);
         dirtyCellIds.add(neighborId);
+        spreadEvents.push({ fromCenter: cell.center, toCenter: neighbor.center });
+      }
+    }
+
+    // Step 1b — Panic-flight long jump: an overrun, mature cell on the
+    // highway / high-road network occasionally seeds a distant cell as
+    // people flee. Creates non-contiguous flare-ups instead of a clean disc.
+    if (cell.status === 'overrun' && maturity >= 1 && hasTransit(cell)) {
+      if (rng() < LONG_JUMP_BASE_P) {
+        const jumpRing = 3 + Math.floor(rng() * 3); // ring 3..5
+        const candidates = h3.gridRing(cellId, jumpRing);
+        if (candidates.length > 0) {
+          const target = candidates[Math.floor(rng() * candidates.length)];
+          const tgt = grid.get(target);
+          if (tgt && tgt.status === 'clean' && tgt.population > 0 && hasTransit(tgt)) {
+            infectCell(tgt, 0.003);
+            dirtyCellIds.add(target);
+            spreadEvents.push({ fromCenter: cell.center, toCenter: tgt.center });
+          }
+        }
       }
     }
   }
@@ -153,6 +192,7 @@ function computeTick(): TickResult {
 
   return {
     updatedCells,
+    spreadEvents,
     stats: computeStats(),
     tick: tickCount,
   };
@@ -195,7 +235,7 @@ function applySIZD(cell: SimCell): SimCell {
 
 // Base β for SIZD (internal to cell, not spread)
 function baseBeta(cell: SimCell): number {
-  let β = 0.35;
+  let β = 0.26;
 
   // Density modifier
   const density = Math.min(cell.population / 50000, 1);
@@ -216,7 +256,7 @@ function baseBeta(cell: SimCell): number {
 
 // Spread probability between two cells
 function spreadProbability(source: SimCell, target: SimCell): number {
-  let β = 0.35;
+  let β = 0.26;
 
   // Factor 1 — infection intensity of source
   const intensity = source.zombie / source.population;
@@ -238,6 +278,12 @@ function spreadProbability(source: SimCell, target: SimCell): number {
   };
   β += roadBonus[target.roads] ?? 0;
 
+  // Factor 3b — wavefront amplification: when BOTH source and target sit on
+  // strong road links, push spread along that corridor (Mapzilla wavefront).
+  if (roadWeight(source.roads) >= 2 && roadWeight(target.roads) >= 2) {
+    β += 0.18;
+  }
+
   // Factor 4 — land use of target
   const landBonus: Record<string, number> = {
     commercial: 0.2,
@@ -255,38 +301,76 @@ function spreadProbability(source: SimCell, target: SimCell): number {
   const decay = Math.exp(-distKm * 2.5);
   β *= decay;
 
-  // Factor 6 — stochastic noise
-  β += (rng() - 0.5) * 0.1;
+  // Factor 6 — wind bias: bearing alignment with the per-sim wind vector.
+  // dot(direction, wind) ∈ [-1, 1] — cells downwind get a boost, upwind a drag.
+  const bearing = Math.atan2(tgtLat - srcLat, tgtLng - srcLng);
+  const alignment = Math.cos(bearing - windAngle);
+  β += alignment * windStrength;
+
+  // Factor 7 — stochastic noise
+  β += (rng() - 0.5) * 0.12;
 
   // Clamp to valid probability
   return Math.max(0, Math.min(1, β));
 }
 
+// Seed an infection into a previously-clean cell.
+function infectCell(cell: SimCell, infectedPct: number): void {
+  cell.zombie = 1;
+  cell.infected = Math.max(1, Math.floor(cell.population * infectedPct));
+  cell.susceptible = cell.population - cell.infected - 1;
+  cell.status = 'infected';
+  cell.infectedAtTick = tickCount;
+}
+
+function roadWeight(road: string): number {
+  switch (road) {
+    case 'highway': return 3;
+    case 'high':    return 2;
+    case 'medium':  return 1;
+    default:        return 0;
+  }
+}
+
+function hasTransit(cell: SimCell): boolean {
+  return roadWeight(cell.roads) >= 2;
+}
+
 // Cell status thresholds
+// A cell with ANY living zombie is never 'clean' — that status means untouched.
 function deriveCellStatus(zombie: number, susceptible: number, population: number): CellStatus {
   if (population <= 0) return 'abandoned';
 
-  const zombieRatio = zombie / population;
-  const survivorRatio = susceptible / population;
-
-  if (zombieRatio > 0.6) return 'overrun';
-  if (zombieRatio > 0.1) return 'infected';
-  if (survivorRatio < 0.05) return 'abandoned';
-  return 'clean';
-}
-
-// End condition
-function isSimulationOver(): boolean {
-  let totalSurvivors = 0;
-  let totalZombies = 0;
-
-  for (const cell of grid.values()) {
-    totalSurvivors += cell.susceptible;
-    totalZombies += cell.zombie;
+  if (zombie <= 0) {
+    const survivorRatio = susceptible / population;
+    return survivorRatio < 0.05 ? 'abandoned' : 'clean';
   }
 
-  // Sim ends when no survivors remain OR no zombies remain (burned out)
-  return totalSurvivors <= 0 || totalZombies <= 0;
+  const zombieRatio = zombie / population;
+  if (zombieRatio > 0.6) return 'overrun';
+  return 'infected';
+}
+
+// End condition — worker only enforces the city-wide hard caps.
+// Personal verdict (user cell overrun) is triggered separately by the main thread.
+function isSimulationOver(): boolean {
+  // Hard ceiling — gives infection time to reach far-away users at 1× speed
+  if (tickCount >= 220) return true;
+
+  // Minimum run time — ALL sound layers need time to cross-fade in
+  // Air-raid begins at 20% overrun; city needs ~60 ticks to get there
+  if (tickCount < 65) return false;
+
+  let overrunCells = 0;
+  let totalCells   = 0;
+
+  for (const cell of grid.values()) {
+    totalCells++;
+    if (cell.status === 'overrun' || cell.status === 'abandoned') overrunCells++;
+  }
+
+  // City 80%+ fallen — simulation is over regardless of user status
+  return totalCells > 0 && overrunCells / totalCells >= 0.80;
 }
 
 // Stats computation
