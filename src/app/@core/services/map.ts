@@ -118,13 +118,15 @@ export class MapService {
       container: containerId,
       style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${environment.mapTilerKey}`,
       center,
-      zoom:   isMobile ? 11 : 12,
-      pitch:  isMobile ? 0  : 35,
-      bearing: -10,
-      fadeDuration:       0,          // skip tile fade-in (no perf cost during pan)
-      renderWorldCopies:  false,      // only render one world — halves fill work
-      maxTileCacheSize:   isMobile ? 20 : 60,
-      touchPitch:         false,      // disable two-finger pitch on mobile (jarring)
+      zoom:             isMobile ? 11 : 12,
+      pitch:            isMobile ? 0  : 35,
+      bearing:          -10,
+      fadeDuration:     0,              // skip tile fade-in flash on load
+      renderWorldCopies: false,         // only render one world copy
+      maxTileCacheSize:  isMobile ? 20 : 60,
+      touchPitch:        false,         // two-finger pitch is jarring on mobile
+      dragRotate:        true,          // right-click drag rotates bearing
+      pixelRatio:        window.devicePixelRatio || 1,
     });
 
     this.map.on('load', () => {
@@ -132,6 +134,13 @@ export class MapService {
       this.addLayers();
       this.isLoaded.set(true);
       this.startAnimationLoop();
+      // Compass + pitch indicator — right-click drag to rotate, click to reset north
+      if (!isMobile) {
+        this.map.addControl(
+          new maplibregl.NavigationControl({ showZoom: false, showCompass: true, visualizePitch: true }),
+          'bottom-right',
+        );
+      }
     });
   }
 
@@ -188,10 +197,10 @@ export class MapService {
     }, this.beforeRoadsId);
 
     // Buildings — 3-D reveal on infection
-    this.buildingFeatures = buildings.map((f) => ({
-      ...f,
-      properties: { ...(f.properties ?? {}), revealStatus: 'clean' },
-    }));
+    // Keep original features as-is; revealStatus lives in feature state, not properties.
+    // generateId:true makes MapLibre assign integer IDs matching array index — lets us
+    // call setFeatureState(id=idx) instead of re-uploading the entire dataset on each tick.
+    this.buildingFeatures = buildings;
 
     this.buildingCellIndex.clear();
     this.buildingFeatures.forEach((f, idx) => {
@@ -208,6 +217,7 @@ export class MapService {
 
     this.map.addSource('city-buildings', {
       type: 'geojson',
+      generateId: true,
       data: { type: 'FeatureCollection', features: this.buildingFeatures },
     });
 
@@ -217,20 +227,20 @@ export class MapService {
       source: 'city-buildings',
       paint:  {
         'fill-extrusion-color': [
-          'match', ['get', 'revealStatus'],
+          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
           'overrun',  '#8800cc',
           'infected', '#cc0020',
           '#0a0010',
         ],
         'fill-extrusion-height': [
-          'match', ['get', 'revealStatus'],
+          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
           'overrun',  90,
           'infected', 45,
           3,
         ],
         'fill-extrusion-base':    0,
         'fill-extrusion-opacity': [
-          'match', ['get', 'revealStatus'],
+          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
           'overrun',  0.95,
           'infected', 0.80,
           0.12,
@@ -278,9 +288,9 @@ export class MapService {
     });
     this.flushHex();
 
-    // Building reveal — only if buildings were loaded
+    // Building reveal — per-feature state updates instead of full setData re-upload.
+    // Each changed building gets a targeted setFeatureState call (O(changed) not O(total)).
     if (this.buildingFeatures.length > 0) {
-      let buildingsDirty = false;
       dirtyCells.forEach((cell) => {
         const indices = this.buildingCellIndex.get(cell.cellId);
         if (!indices) return;
@@ -288,16 +298,12 @@ export class MapService {
           cell.status === 'overrun'  ? 'overrun'  :
           cell.status === 'infected' ? 'infected' : 'clean';
         indices.forEach((idx) => {
-          if (this.buildingFeatures[idx].properties!['revealStatus'] !== next) {
-            this.buildingFeatures[idx].properties!['revealStatus'] = next;
-            buildingsDirty = true;
-          }
+          this.map.setFeatureState(
+            { source: 'city-buildings', id: idx },
+            { revealStatus: next },
+          );
         });
       });
-      if (buildingsDirty) {
-        (this.map.getSource('city-buildings') as GeoJSONSource | undefined)
-          ?.setData({ type: 'FeatureCollection', features: this.buildingFeatures });
-      }
     }
   }
 
@@ -703,8 +709,8 @@ export class MapService {
       return;
     }
 
-    // Tracer tails — medium cost, upload every frame only while tracers are active
-    if (hadTracers || stillActive.length > 0) {
+    // Tracer tails — thick blurry lines; every-other-frame is imperceptible at 60fps
+    if ((hadTracers || stillActive.length > 0) && this.frameCount % 2 === 0) {
       (this.map.getSource('tracer-tails') as GeoJSONSource|undefined)
         ?.setData({ type: 'FeatureCollection', features: tailFeatures });
     }
@@ -752,8 +758,11 @@ export class MapService {
     }
 
     this.ringPings = liveRings;
-    (this.map.getSource('ring-pings') as GeoJSONSource|undefined)
-      ?.setData({ type: 'FeatureCollection', features: ringFeatures });
+    // Ring pings expand over ~1.4 s — 30fps upload is visually indistinguishable from 60fps
+    if (this.frameCount % 2 === 0) {
+      (this.map.getSource('ring-pings') as GeoJSONSource|undefined)
+        ?.setData({ type: 'FeatureCollection', features: ringFeatures });
+    }
   }
 
   // Misc
@@ -859,11 +868,9 @@ export class MapService {
     this.ringPings = [];
     (['hex-grid', 'spread-lines', 'tracer-tails', 'tracers', 'ring-pings'] as const)
       .forEach((id) => (this.map.getSource(id) as GeoJSONSource | undefined)?.setData(empty));
-    // Reset building reveal statuses
+    // Reset all building feature states in one call — clears every revealStatus
     if (this.buildingFeatures.length > 0) {
-      this.buildingFeatures.forEach(f => { f.properties!['revealStatus'] = 'clean'; });
-      (this.map.getSource('city-buildings') as GeoJSONSource | undefined)
-        ?.setData({ type: 'FeatureCollection', features: this.buildingFeatures });
+      this.map.removeFeatureState({ source: 'city-buildings' });
     }
   }
 

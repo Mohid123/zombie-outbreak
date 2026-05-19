@@ -306,7 +306,8 @@ export class MapShell implements OnInit, OnDestroy {
       // Narrative messages — keyed to escape status, not raw cell status
       this.narrative.onTick(tick, result.spreadEvents.length, this.state.cityOverrunPct(), this.state.escapeStatus());
 
-      this.cdr.markForCheck();
+      // No markForCheck needed here — all template bindings are signals; Angular's
+      // reactive graph schedules re-render automatically when signal values change.
 
       // Personal verdict: fires 10 ticks after user's own cell is overrun
       if (this.pendingVerdictAtTick > 0 && tick >= this.pendingVerdictAtTick) {
