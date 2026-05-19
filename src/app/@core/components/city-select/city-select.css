@@ -59,7 +59,18 @@
 }
 
 @media (max-width: 600px) {
-  .grid { grid-template-columns: 1fr; }
+  .select-root {
+    align-items: flex-start;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+  .content { padding: 16px 12px 32px; gap: 16px; }
+  .grid { grid-template-columns: 1fr; gap: 10px; }
+  .card-inner { padding: 14px 14px 12px; }
+  .city-name { font-size: 20px; }
+  .city-desc { display: none; } /* hide tagline on mobile — saves ~40px per card */
+  .flag { font-size: 26px; }
 }
 
 .city-card {

@@ -284,7 +284,7 @@
   /* Escape window: full-width strip sitting directly above the controls bar */
   .escape-hud {
     top: auto;
-    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 108px);
+    bottom: 164px; /* 48px anchor + ~96px controls height + 20px gap */
     left: 8px; right: 8px;
     min-width: unset; max-width: unset;
     padding: 6px 12px;
@@ -311,9 +311,9 @@
   .legend-hud { display: none; }
   .news-feed  { display: none; }
 
-  /* Controls: two stacked rows, safe-area aware */
+  /* Controls: two stacked rows — 48px bottom clears iPhone home bar + safe margin */
   .controls-hud {
-    bottom: max(env(safe-area-inset-bottom, 0px), 20px);
+    bottom: 48px;
     left: 8px; right: 8px;
     transform: none;
     white-space: normal;
@@ -364,7 +364,7 @@
 
   /* Placement overlay: full width, above controls + escape strip */
   .overlay-instruction {
-    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 160px);
+    bottom: 210px; /* above escape strip */
     left: 8px; right: 8px;
     transform: none;
     min-width: unset;
