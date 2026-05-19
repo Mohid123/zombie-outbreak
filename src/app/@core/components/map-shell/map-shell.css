@@ -284,7 +284,7 @@
   /* Escape window: full-width strip sitting directly above the controls bar */
   .escape-hud {
     top: auto;
-    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 92px);
+    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 108px);
     left: 8px; right: 8px;
     min-width: unset; max-width: unset;
     padding: 6px 12px;
@@ -352,16 +352,19 @@
   .ctrl-label { display: none; }
   .ctrl-btn {
     font-size: 10px;
-    padding: 0;
+    padding: 0 4px;
     min-height: 36px;
     display: flex; align-items: center; justify-content: center;
-    letter-spacing: .03em;
+    letter-spacing: .02em;
+    white-space: nowrap;        /* prevent "STANDARD" wrapping to 2 lines */
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .pause-btn, .mute-btn { font-size: 15px; min-width: 38px; flex-shrink: 0; }
 
   /* Placement overlay: full width, above controls + escape strip */
   .overlay-instruction {
-    bottom: calc(max(env(safe-area-inset-bottom, 0px), 30px) + 140px);
+    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 160px);
     left: 8px; right: 8px;
     transform: none;
     min-width: unset;
