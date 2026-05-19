@@ -390,9 +390,12 @@ export class MapShell implements OnInit, OnDestroy {
   randomiseUserLocation(): void {
     if (!this.cityData) return;
     this.audio.click();
+    // roads !== 'none' guarantees the cell is on land — water cells never have road data
     const candidates = this.cityData.cells.filter(c =>
-      c.population > 200 && c.landUse !== 'water');
-    const cell = candidates[Math.floor(Math.random() * candidates.length)] ?? this.cityData.cells[0];
+      c.population > 200 && c.landUse !== 'water' && c.roads !== 'none');
+    const fallback = this.cityData.cells.filter(c => c.population > 200 && c.landUse !== 'water');
+    const pool = candidates.length > 0 ? candidates : fallback;
+    const cell = pool[Math.floor(Math.random() * pool.length)] ?? this.cityData.cells[0];
     this.placeUser(cell.center);
   }
 
@@ -411,8 +414,27 @@ export class MapShell implements OnInit, OnDestroy {
   surpriseMe(): void {
     if (!this.cityData) return;
     this.audio.static(0.2);
-    const candidates = this.cityData.cells.filter(c =>
-      c.population > 1000 && (c.landUse === 'residential' || c.landUse === 'commercial'));
+
+    // roads !== 'none' excludes water cells that OSM left untagged (they default to
+    // 'residential' in preprocessing but have no road intersections over open water)
+    const onLand = this.cityData.cells.filter(c =>
+      c.population > 1000 && c.landUse !== 'water' && c.roads !== 'none');
+
+    // Prefer ground zero near the user so the simulation feels personal
+    const userCoord = this.state.userCoord();
+    let pool = onLand;
+    if (userCoord && onLand.length > 0) {
+      const [uLng, uLat] = userCoord;
+      const nearby = onLand.filter(c => {
+        const dLng = c.center[0] - uLng;
+        const dLat = c.center[1] - uLat;
+        return (dLng * dLng + dLat * dLat) < 0.0225; // ≈15 km radius
+      });
+      if (nearby.length > 0) pool = nearby;
+    }
+
+    const fallback = this.cityData.cells.filter(c => c.population > 0 && c.landUse !== 'water');
+    const candidates = pool.length > 0 ? pool : fallback;
     const cell = candidates[Math.floor(Math.random() * candidates.length)] ?? this.cityData.cells[0];
     this.dropGroundZero(cell.center);
   }
