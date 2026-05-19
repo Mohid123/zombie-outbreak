@@ -1,8 +1,14 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { shareReplay } from 'rxjs/operators';
+import { Observable } from 'rxjs';
 import { AppState } from '../../../app.state';
 import { AudioService } from '../../services/audio.service';
 import { CITY_CONFIGS, CityConfig } from '../../interfaces/state.interface';
+
+// Module-level cache so pre-fetched data survives navigation
+const cityCache = new Map<string, Observable<unknown>>();
 
 @Component({
   selector: 'app-city-select',
@@ -55,13 +61,27 @@ export class CitySelectComponent {
   private router = inject(Router);
   private state  = inject(AppState);
   private audio  = inject(AudioService);
+  private http   = inject(HttpClient);
 
   readonly cities = CITY_CONFIGS;
 
   select(city: CityConfig): void {
     this.audio.click();
     this.state.setSelectedCityConfig(city);
+
+    // Start downloading the city JSON now — by the time the user finishes
+    // the quiz (~30s) it will already be in the browser's HTTP cache.
+    if (!cityCache.has(city.id)) {
+      cityCache.set(city.id,
+        this.http.get(city.jsonFile).pipe(shareReplay(1))
+      );
+    }
+    cityCache.get(city.id)!.subscribe(); // trigger the request
+
     this.audio.static(0.2);
     this.router.navigate(['/quiz']);
   }
 }
+
+// Export so map-shell can reuse the same cached observable
+export { cityCache };

@@ -8,6 +8,7 @@ import { VerdictComponent } from '../verdict/verdict';
 import { toObservable } from '@angular/core/rxjs-interop';
 import { filter, take } from 'rxjs/operators';
 import { MapService, RoadGraph } from '../../services/map';
+import { cityCache } from '../city-select/city-select';
 import { HttpClient } from '@angular/common/http';
 import { SimCell } from '../../interfaces/simulation.model';
 import { SimulationService } from '../../services/simulation';
@@ -277,7 +278,7 @@ export class MapShell implements OnInit, OnDestroy {
     if (!cityConfig) { this.router.navigate(['/select']); return; }
 
     this.narrative.init();
-    this.mapService.init('map');
+    this.mapService.init('map', cityConfig.center);
 
     this.mapLoaded$
       .pipe(filter(l => l), take(1))
@@ -337,15 +338,29 @@ export class MapShell implements OnInit, OnDestroy {
 
   private onMapReady(): void {
     const cfg = this.state.selectedCityConfig()!;
-    // Center map on city (no drama yet — patient zero drop creates the drama)
-    this.mapService.flyTo(cfg.center, 12);
 
-    this.http.get<CityJSON>(cfg.jsonFile).subscribe(city => {
+    // Use the pre-fetched observable from city-select if available,
+    // otherwise fall back to a fresh HTTP request.
+    const source = cityCache.get(cfg.id) ?? this.http.get<CityJSON>(cfg.jsonFile);
+
+    source.subscribe((raw) => {
+      const city = raw as CityJSON;
       this.cityData = city;
       this.mapService.renderGrid(city.cells);
-      if (city.roadGraph) this.mapService.initRoadGraph(city.roadGraph);
-      if (city.buildings || city.parks || city.water)
-        this.mapService.loadCityFeatures(city.buildings ?? [], city.parks ?? [], city.water ?? []);
+
+      // Defer heavy non-critical work so the first paint is fast.
+      // Road graph and city features are not needed until the sim starts.
+      const idle = (typeof requestIdleCallback !== 'undefined')
+        ? (fn: () => void) => requestIdleCallback(fn)
+        : (fn: () => void) => setTimeout(fn, 80);
+
+      idle(() => {
+        if (city.roadGraph) this.mapService.initRoadGraph(city.roadGraph);
+        // Skip parks — 20k polygons stall the GPU for no visual gain.
+        // Water bodies and landmark buildings still render.
+        if (city.buildings || city.water)
+          this.mapService.loadCityFeatures(city.buildings ?? [], [], city.water ?? []);
+      });
 
       // Wire map click for patient zero / user placement
       this.mapService.onMapClick(coord => this.handleMapClick(coord));

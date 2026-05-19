@@ -110,14 +110,14 @@ export class MapService {
 
   // Init
 
-  init(containerId: string): void {
+  init(containerId: string, center: [number, number] = [-74.006, 40.7128]): void {
     const isMobile = window.innerWidth < 768 ||
       /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
     this.map = new maplibregl.Map({
       container: containerId,
       style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${environment.mapTilerKey}`,
-      center: [-74.006, 40.7128],
+      center,
       zoom:   isMobile ? 11 : 12,
       pitch:  isMobile ? 0  : 35,
       bearing: -10,
