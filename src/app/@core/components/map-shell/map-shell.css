@@ -138,6 +138,8 @@
   display: flex; align-items: center; gap: 12px;
   white-space: nowrap;
 }
+.ctrl-row { display: flex; align-items: center; gap: 7px; }
+.ctrl-main-divider { width: 1px; height: 22px; }
 .ctrl-group { display: flex; align-items: center; gap: 7px; }
 .ctrl-label {
   font-family: var(--font-hud); font-size: 8px; letter-spacing: .18em;
@@ -244,42 +246,129 @@
   display: flex; align-items: center; justify-content: center;
 }
 
-/* Mobile responsive */
+/* Mobile — everything below 640 px */
 @media (max-width: 640px) {
+
+  /* Stats: slim single-row strip at top */
   .stats-hud {
-    top: 8px; left: 8px; right: 8px;
+    top: max(env(safe-area-inset-top, 0px), 8px);
+    left: 8px; right: 8px;
+    min-width: unset;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+  }
+  .hud-title { display: none; }
+  .stat-grid {
+    flex: 1;
+    display: flex; flex-direction: row;
+    gap: 0; margin-bottom: 0;
+  }
+  .stat-item {
+    flex: 1;
+    flex-direction: row;
+    align-items: center; justify-content: center;
+    gap: 4px; padding: 0 2px;
+    border-right: 1px solid rgba(255,0,60,.14);
+  }
+  .stat-item:last-child { border-right: none; }
+  .si-icon { font-size: 11px; }
+  .si-val  { font-size: 12px; letter-spacing: 0; }
+  .si-lbl  { display: none; }
+  .overrun-bar { flex-shrink: 0; width: 52px; margin: 0 0 0 8px; }
+  .ob-label    { display: none; }
+  .ob-pct      { font-size: 9px; margin-top: 2px; }
+
+  /* Escape window: full-width strip sitting directly above the controls bar */
+  .escape-hud {
+    top: auto;
+    bottom: calc(max(env(safe-area-inset-bottom, 0px), 20px) + 92px);
+    left: 8px; right: 8px;
+    min-width: unset; max-width: unset;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .esc-status {
+    font-size: 11px;
+    letter-spacing: .04em;
+    flex: 1;
+    margin-bottom: 0;
+  }
+  /* Show urgency inline as a small suffix instead of a separate line */
+  .esc-urgency {
+    display: block;
+    font-size: 9px;
+    letter-spacing: .04em;
+    color: rgba(255,180,190,.55);
+    flex-shrink: 0;
+    text-align: right;
+  }
+
+  .legend-hud { display: none; }
+  .news-feed  { display: none; }
+
+  /* Controls: two stacked rows, safe-area aware */
+  .controls-hud {
+    bottom: max(env(safe-area-inset-bottom, 0px), 20px);
+    left: 8px; right: 8px;
+    transform: none;
+    white-space: normal;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     padding: 8px 10px;
   }
-  .stat-grid { grid-template-columns: repeat(4, 1fr); gap: 4px; }
-  .si-val { font-size: 12px; }
 
-  .escape-hud {
-    top: auto; bottom: 70px; right: 8px; left: 8px;
-    padding: 7px 10px;
+  /* ctrl-row: horizontal flex container for each row */
+  .ctrl-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
   }
 
-  .legend-hud { display: none; } /* hidden on small screens */
+  /* Primary row: ⏸ grows speed buttons fill space 🔊 */
+  .ctrl-row-primary .ctrl-group { flex: 1; min-width: 0; }
+  .ctrl-row-primary .btn-row    { display: flex; gap: 3px; width: 100%; }
+  .ctrl-row-primary .btn-row .ctrl-btn { flex: 1; }
 
-  .controls-hud {
-    bottom: 8px; left: 8px; right: 8px;
-    transform: none;
-    flex-wrap: wrap; gap: 8px;
-    padding: 6px 10px;
-  }
+  /* Strain row: three buttons fill full width */
+  .ctrl-row-strain  { gap: 0; }
+  .ctrl-row-strain  .ctrl-group { flex: 1; min-width: 0; }
+  .ctrl-row-strain  .btn-row    { display: flex; gap: 3px; width: 100%; }
+  .ctrl-row-strain  .btn-row .ctrl-btn { flex: 1; }
+
+  /* The divider BETWEEN rows becomes horizontal; inline dividers stay as-is */
+  .ctrl-main-divider { width: 100%; height: 1px; }
+
+  /* Inline dividers inside primary row stay vertical */
+  .ctrl-row-primary .ctrl-divider { width: 1px; height: 20px; }
+
   .ctrl-label { display: none; }
-  .ctrl-btn { font-size: 10px; padding: 4px 7px; }
-
-  .news-feed {
-    display: none; /* hidden on mobile to reduce clutter */
+  .ctrl-btn {
+    font-size: 10px;
+    padding: 0;
+    min-height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    letter-spacing: .03em;
   }
+  .pause-btn, .mute-btn { font-size: 15px; min-width: 38px; flex-shrink: 0; }
 
+  /* Placement overlay: full width, above controls + escape strip */
   .overlay-instruction {
-    bottom: 16px; left: 8px; right: 8px;
+    bottom: calc(max(env(safe-area-inset-bottom, 0px), 30px) + 140px);
+    left: 8px; right: 8px;
     transform: none;
-    padding: 14px 16px 12px;
     min-width: unset;
+    padding: 14px 16px 12px;
   }
   .oi-title { font-size: 20px; }
+  .oi-sub   { font-size: 10px; }
 }
 
 /* Water fail card */

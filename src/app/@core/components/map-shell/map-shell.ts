@@ -155,35 +155,42 @@ const ESCAPE_CLASSES: Record<EscapeStatus, string> = {
 
     <!-- Controls HUD -->
     <div class="hud controls-hud panel">
-      <div class="ctrl-group">
-        <span class="ctrl-label">SPEED</span>
-        <div class="btn-row">
-          @for (s of speeds; track s.ms) {
-            <button class="ctrl-btn" [class.active]="state.tickSpeed() === s.ms" (click)="setSpeed(s.ms)">
-              {{ s.label }}
-            </button>
-          }
+      <!-- Row 1 (desktop: inline) / Row 1 (mobile: top row) -->
+      <div class="ctrl-row ctrl-row-primary">
+        <button class="ctrl-btn pause-btn" (click)="togglePause()" [title]="state.isRunning() ? 'Pause' : 'Resume'">
+          {{ state.isRunning() ? '⏸' : '▶' }}
+        </button>
+        <div class="ctrl-divider"></div>
+        <div class="ctrl-group">
+          <span class="ctrl-label">SPEED</span>
+          <div class="btn-row">
+            @for (s of speeds; track s.ms) {
+              <button class="ctrl-btn" [class.active]="state.tickSpeed() === s.ms" (click)="setSpeed(s.ms)">
+                {{ s.label }}
+              </button>
+            }
+          </div>
+        </div>
+        <div class="ctrl-divider"></div>
+        <button class="ctrl-btn mute-btn" (click)="toggleMute()" [title]="audio.muted() ? 'Unmute' : 'Mute'">
+          {{ audio.muted() ? '🔇' : '🔊' }}
+        </button>
+      </div>
+
+      <!-- Row 2 (desktop: inline after divider) / Row 2 (mobile: strain row) -->
+      <div class="ctrl-divider ctrl-main-divider"></div>
+      <div class="ctrl-row ctrl-row-strain">
+        <div class="ctrl-group">
+          <span class="ctrl-label">STRAIN</span>
+          <div class="btn-row">
+            @for (v of variants; track v.value) {
+              <button class="ctrl-btn" [class.active]="state.variant() === v.value" (click)="setVariant(v.value)">
+                {{ v.label }}
+              </button>
+            }
+          </div>
         </div>
       </div>
-      <div class="ctrl-divider"></div>
-      <div class="ctrl-group">
-        <span class="ctrl-label">STRAIN</span>
-        <div class="btn-row">
-          @for (v of variants; track v.value) {
-            <button class="ctrl-btn" [class.active]="state.variant() === v.value" (click)="setVariant(v.value)">
-              {{ v.label }}
-            </button>
-          }
-        </div>
-      </div>
-      <div class="ctrl-divider"></div>
-      <button class="ctrl-btn pause-btn" (click)="togglePause()" [title]="state.isRunning() ? 'Pause' : 'Resume'">
-        {{ state.isRunning() ? '⏸' : '▶' }}
-      </button>
-      <div class="ctrl-divider"></div>
-      <button class="ctrl-btn mute-btn" (click)="toggleMute()" [title]="audio.muted() ? 'Unmute' : 'Mute'">
-        {{ audio.muted() ? '🔇' : '🔊' }}
-      </button>
     </div>
 
     <!-- News feed -->
