@@ -861,6 +861,11 @@ export class MapService {
       .addTo(this.map);
   }
 
+  clearMarkers(): void {
+    this.pzMarker?.remove();   this.pzMarker = null;
+    this.userMarker?.remove(); this.userMarker = null;
+  }
+
   resetSimLayers(): void {
     const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
     this.hexFeatures.clear();

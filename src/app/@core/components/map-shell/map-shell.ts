@@ -520,6 +520,7 @@ export class MapShell implements OnInit, OnDestroy {
   retryAfterWater(): void {
     this.audio.click();
     this.waterFail.set(false);
+    this.mapService.clearMarkers();
     this.mapService.resetSimLayers();
     this.state.resetSimState();
     this.state.setSimPhase('placing-user');
