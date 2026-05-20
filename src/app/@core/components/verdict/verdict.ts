@@ -1,15 +1,23 @@
 import {
-  ChangeDetectionStrategy, Component, inject,
-  OnInit, OnDestroy, signal, computed,
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  OnInit,
+  OnDestroy,
+  signal,
+  computed,
 } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { AppState } from '../../../app.state';
 import { AudioService } from '../../services/audio.service';
 import { SurvivalService, SurvivalResult } from '../../services/survival.service';
+import { ShareService } from '../../services/share';
 
 function randRef(): string {
-  return 'ZBM-' + new Date().getFullYear() + '-' +
-    String(Math.floor(Math.random() * 90000) + 10000);
+  return (
+    'ZBM-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 90000) + 10000)
+  );
 }
 
 function bar(pct: number, len = 12): string {
@@ -19,6 +27,8 @@ function bar(pct: number, len = 12): string {
 
 @Component({
   selector: 'app-verdict',
+  standalone: true,
+  imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="verdict-root">
@@ -50,7 +60,7 @@ function bar(pct: number, len = 12): string {
           </div>
           <div class="meta-row">
             <span class="ml">CITY SURVIVORS</span>
-            <span class="mv">{{ survivorBar() }}  {{ survPct() }}%</span>
+            <span class="mv">{{ survivorBar() }} {{ survPct() }}%</span>
           </div>
         </div>
 
@@ -75,16 +85,85 @@ function bar(pct: number, len = 12): string {
 
         <!-- Actions -->
         <div class="actions">
-          <button class="action-btn primary" (click)="share()">
-            {{ showCopied() ? '✓ COPIED TO CLIPBOARD' : '[ SHARE ]' }}
+          <!-- Share button — opens the panel -->
+          <button class="action-btn primary" (click)="openSharePanel()" [disabled]="isShorting()">
+            @if (isShorting()) {
+              <span class="sp-spinner">⟳</span> BUILDING LINK…
+            } @else {
+              [ SHARE ]
+            }
           </button>
           <button class="action-btn" (click)="tryAgain()">[ TRY AGAIN ]</button>
         </div>
 
-        <div class="card-footer">
-          ⚠ UNAUTHORISED DISTRIBUTION PROHIBITED ⚠
-        </div>
+        <div class="card-footer">⚠ UNAUTHORISED DISTRIBUTION PROHIBITED ⚠</div>
       </div>
+
+      <!-- ── Share panel overlay ─────────────────────────────────────────── -->
+      @if (sharePanelOpen()) {
+        <div class="sp-overlay" (click)="closeSharePanel()">
+          <div class="sp-panel" (click)="$event.stopPropagation()">
+            <!-- Header -->
+            <div class="sp-header">
+              <span class="sp-title">📡 BROADCAST YOUR APOCALYPSE</span>
+              <button class="sp-close" (click)="closeSharePanel()" aria-label="Close">✕</button>
+            </div>
+
+            <!-- URL row -->
+            <div class="sp-url-row">
+              <div class="sp-url-box">
+                @if (shareUrl()) {
+                  <span class="sp-url-text">{{ shareUrl() }}</span>
+                } @else if (isShorting()) {
+                  <span class="sp-url-placeholder">Generating link…</span>
+                } @else {
+                  <span class="sp-url-placeholder">Link unavailable</span>
+                }
+              </div>
+              <button
+                class="sp-copy-btn"
+                [class.sp-copy-btn--copied]="copied()"
+                [disabled]="!shareUrl()"
+                (click)="copyUrl()"
+              >
+                {{ copied() ? '✓ COPIED' : 'COPY' }}
+              </button>
+            </div>
+
+            @if (shareError()) {
+              <p class="sp-error">⚠ {{ shareError() }}</p>
+            }
+
+            <!-- Social buttons -->
+            <div class="sp-socials">
+              <button
+                class="sp-social sp-social--twitter"
+                [disabled]="!shareUrl()"
+                (click)="openTwitter()"
+              >
+                <span>𝕏</span> Post on X
+              </button>
+              <button
+                class="sp-social sp-social--whatsapp"
+                [disabled]="!shareUrl()"
+                (click)="openWhatsApp()"
+              >
+                <span>💬</span> WhatsApp
+              </button>
+              <button class="sp-social sp-social--image" (click)="downloadImage()">
+                <span>🖼</span> Save Image
+              </button>
+            </div>
+
+            <div class="sp-divider"></div>
+
+            <p class="sp-hint">
+              Anyone with this link sees the exact same outbreak — same city, same seed, same
+              spread.
+            </p>
+          </div>
+        </div>
+      }
 
       <!-- Hidden share canvas -->
       <canvas #shareCanvas style="display:none" width="700" height="440"></canvas>
@@ -93,16 +172,23 @@ function bar(pct: number, len = 12): string {
   styleUrl: './verdict.css',
 })
 export class VerdictComponent implements OnInit, OnDestroy {
-  private router   = inject(Router);
-  private state    = inject(AppState);
-  private audio    = inject(AudioService);
+  private router = inject(Router);
+  private state = inject(AppState);
+  private audio = inject(AudioService);
   private survival = inject(SurvivalService);
+  private shareService = inject(ShareService);
 
-  readonly result     = signal<SurvivalResult | null>(null);
-  readonly showCopied = signal(false);
-  readonly ref        = randRef();
+  readonly result = signal<SurvivalResult | null>(null);
+  readonly sharePanelOpen = signal(false);
+  readonly copied = signal(false);
+  readonly ref = randRef();
 
-  readonly cityName   = computed(() => this.state.selectedCityConfig()?.displayName ?? 'UNKNOWN');
+  // ShareService signals — passed straight to template
+  readonly shareUrl = this.shareService.shortUrl;
+  readonly isShorting = this.shareService.isShortening;
+  readonly shareError = this.shareService.error;
+
+  readonly cityName = computed(() => this.state.selectedCityConfig()?.displayName ?? 'UNKNOWN');
   readonly variantLabel = computed(() => {
     const v = this.state.variant();
     return v === 'fast' ? 'RUNNER' : v === 'horde' ? 'HORDE' : 'STANDARD';
@@ -111,21 +197,28 @@ export class VerdictComponent implements OnInit, OnDestroy {
     const h = this.state.hoursElapsed();
     return `${h}h ${Math.floor(Math.random() * 59)}m`;
   });
-  readonly survPct  = computed(() =>
-    Math.round(this.state.cityOverrunPct() === 0 ? 100 :
-      (1 - this.state.cityOverrunPct()) * 100 * (0.85 + Math.random() * 0.15)));
+  readonly survPct = computed(() =>
+    Math.round(
+      this.state.cityOverrunPct() === 0
+        ? 100
+        : (1 - this.state.cityOverrunPct()) * 100 * (0.85 + Math.random() * 0.15),
+    ),
+  );
   readonly survivorBar = computed(() => bar(this.survPct()));
 
-  private toneTimer    = 0;
+  private toneTimer: number = 0;
   private verdictAudio: HTMLAudioElement | null = null;
 
   ngOnInit(): void {
     const profile = this.state.userProfile();
-    if (!profile) { this.router.navigate(['/select']); return; }
+    if (!profile) {
+      this.router.navigate(['/select']);
+      return;
+    }
 
-    const pzCell  = this.state.patientZeroCell();
+    const pzCell = this.state.patientZeroCell();
     const userCell = this.state.userCell();
-    const isPZ    = !!pzCell && !!userCell && pzCell === userCell;
+    const isPZ = !!pzCell && !!userCell && pzCell === userCell;
 
     const res = this.survival.calculate(
       profile,
@@ -139,64 +232,63 @@ export class VerdictComponent implements OnInit, OnDestroy {
     this.audio.static(0.5);
     this.toneTimer = window.setTimeout(() => {
       this.result.set(res);
-      // Track the verdict audio so tryAgain can stop it
       this.verdictAudio = new Audio('/verdict.mp3');
       this.verdictAudio.volume = 0.95;
       this.verdictAudio.play().catch(() => this.audio.verdictTone());
     }, 600);
   }
 
-  share(): void {
+  // ── Share panel ────────────────────────────────────────────────────────────
+
+  openSharePanel(): void {
     this.audio.click();
-    this.shareCard();
+    this.sharePanelOpen.set(true);
   }
 
-  private async shareCard(): Promise<void> {
+  closeSharePanel(): void {
+    this.sharePanelOpen.set(false);
+  }
+
+  async copyUrl(): Promise<void> {
+    const url = this.shareUrl();
+    if (!url) return;
+    const ok = await this.shareService.copyToClipboard(url);
+    if (ok) {
+      this.audio.click();
+      this.copied.set(true);
+      setTimeout(() => this.copied.set(false), 2500);
+    }
+  }
+
+  openTwitter(): void {
+    const url = this.shareUrl();
+    if (!url) return;
+    const overrunPct = this.state.finalOverrunPct();
+    window.open(this.shareService.buildTwitterIntent(url, this.cityName(), overrunPct), '_blank');
+  }
+
+  openWhatsApp(): void {
+    const url = this.shareUrl();
+    if (!url) return;
+    const overrunPct = this.state.finalOverrunPct();
+    window.open(this.shareService.buildWhatsAppShare(url, this.cityName(), overrunPct), '_blank');
+  }
+
+  /** Preserves the original canvas image download from the old share() flow */
+  downloadImage(): void {
     const res = this.result();
     if (!res) return;
-
-    const canvas = this.buildCanvas(res);
-    const shareText =
-      `☣ ZOMBIE OUTBREAK REPORT ☣\n` +
-      `City: ${this.cityName()} | Outcome: ${res.headline}\n` +
-      `Survival probability: ${res.probability}%\n` +
-      `"${res.flavourText}"\n` +
-      `Can you do better? → zombiemap.io`;
-
-    // Mobile: Web Share API with image
-    if (typeof navigator.share === 'function') {
-      try {
-        const blob: Blob = await new Promise(res => canvas.toBlob(b => res(b!), 'image/png'));
-        const file = new File([blob], 'zombie-outbreak-report.png', { type: 'image/png' });
-        const canShareFiles = navigator.canShare?.({ files: [file] });
-        if (canShareFiles) {
-          await navigator.share({ title: 'Zombie Outbreak Report', text: shareText, files: [file] });
-          return;
-        }
-        // Share text + url without file
-        await navigator.share({ title: 'Zombie Outbreak Report', text: shareText });
-        return;
-      } catch { /* user cancelled or not supported — fall through */ }
-    }
-
-    // Desktop fallback: copy text to clipboard + trigger image download
-    try {
-      await navigator.clipboard.writeText(shareText);
-      this.showCopied.set(true);
-      setTimeout(() => this.showCopied.set(false), 2500);
-    } catch {}
-    this.downloadCanvas(canvas);
+    this.audio.click();
+    this.downloadCanvas(this.buildCanvas(res));
   }
 
-  private downloadCanvas(canvas: HTMLCanvasElement): void {
-    const a    = document.createElement('a');
-    a.download = `zombie-outbreak-${Date.now()}.png`;
-    a.href     = canvas.toDataURL('image/png');
-    a.click();
+  async finalizeTimelapse(): Promise<void> {
+    const cityName = this.state.selectedCityConfig()?.displayName ?? 'city';
   }
+
+  // ── Try again ──────────────────────────────────────────────────────────────
 
   tryAgain(): void {
-    // Stop verdict sting immediately
     if (this.verdictAudio) {
       this.verdictAudio.pause();
       this.verdictAudio.currentTime = 0;
@@ -208,11 +300,20 @@ export class VerdictComponent implements OnInit, OnDestroy {
     this.router.navigate(['/select']);
   }
 
+  // ── Canvas helpers (unchanged from original) ───────────────────────────────
+
+  private downloadCanvas(canvas: HTMLCanvasElement): void {
+    const a = document.createElement('a');
+    a.download = `zombie-outbreak-${Date.now()}.png`;
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  }
+
   private buildCanvas(res: SurvivalResult): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
-    canvas.width  = 700;
+    canvas.width = 700;
     canvas.height = 440;
-    const ctx    = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d')!;
 
     // Background
     ctx.fillStyle = '#050008';
@@ -220,21 +321,31 @@ export class VerdictComponent implements OnInit, OnDestroy {
 
     // Border
     ctx.strokeStyle = '#ff003c';
-    ctx.lineWidth   = 1.5;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(12, 12, 676, 416);
     ctx.strokeStyle = 'rgba(255,0,60,.3)';
     ctx.lineWidth = 0.5;
     ctx.strokeRect(16, 16, 668, 408);
 
     // Corner decorations
-    const corners: [number,number,number,number][] = [[12,12,1,1],[688,12,-1,1],[12,428,1,-1],[688,428,-1,-1]];
-    ctx.strokeStyle = '#ff003c'; ctx.lineWidth = 2;
-    corners.forEach(([x,y,dx,dy]) => {
-      ctx.beginPath(); ctx.moveTo(x, y + dy*20); ctx.lineTo(x,y); ctx.lineTo(x + dx*20, y); ctx.stroke();
+    const corners: [number, number, number, number][] = [
+      [12, 12, 1, 1],
+      [688, 12, -1, 1],
+      [12, 428, 1, -1],
+      [688, 428, -1, -1],
+    ];
+    ctx.strokeStyle = '#ff003c';
+    ctx.lineWidth = 2;
+    corners.forEach(([x, y, dx, dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(x, y + dy * 20);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x + dx * 20, y);
+      ctx.stroke();
     });
 
-    const mono = '\'Share Tech Mono\', monospace';
-    const title = '\'Bebas Neue\', sans-serif';
+    const mono = "'Share Tech Mono', monospace";
+    const title = "'Bebas Neue', sans-serif";
 
     // Header
     ctx.fillStyle = 'rgba(255,0,60,.55)';
@@ -245,8 +356,12 @@ export class VerdictComponent implements OnInit, OnDestroy {
     ctx.fillText(`INCIDENT REF: ${this.ref}`, 440, 44);
 
     // Divider
-    ctx.strokeStyle = 'rgba(255,0,60,.35)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(32, 56); ctx.lineTo(668, 56); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,0,60,.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(32, 56);
+    ctx.lineTo(668, 56);
+    ctx.stroke();
 
     // Meta section
     ctx.letterSpacing = '2px';
@@ -266,7 +381,10 @@ export class VerdictComponent implements OnInit, OnDestroy {
 
     // Divider 2
     ctx.strokeStyle = 'rgba(255,0,60,.35)';
-    ctx.beginPath(); ctx.moveTo(32, 160); ctx.lineTo(668, 160); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(32, 160);
+    ctx.lineTo(668, 160);
+    ctx.stroke();
 
     // Verdict
     ctx.letterSpacing = '6px';
@@ -278,9 +396,12 @@ export class VerdictComponent implements OnInit, OnDestroy {
     ctx.fillStyle = '#fff';
     ctx.font = `bold 46px ${title}`;
     const outcomeColors: Record<string, string> = {
-      survived_hero: '#00ff88', survived_lucky: '#88ff44',
-      survived_barely: '#ffcc00', turned: '#b026ff',
-      died_fighting: '#ff6600', patient_zero_irony: '#ff003c',
+      survived_hero: '#00ff88',
+      survived_lucky: '#88ff44',
+      survived_barely: '#ffcc00',
+      turned: '#b026ff',
+      died_fighting: '#ff6600',
+      patient_zero_irony: '#ff003c',
     };
     ctx.fillStyle = outcomeColors[res.outcome] ?? '#fff';
     ctx.fillText(res.headline, 32, 238);
@@ -295,18 +416,26 @@ export class VerdictComponent implements OnInit, OnDestroy {
     ctx.letterSpacing = '0px';
     ctx.font = `italic 12px ${mono}`;
     const words = `"${res.flavourText}"`.split(' ');
-    let line = '', y = 296;
-    words.forEach(w => {
+    let line = '',
+      y = 296;
+    words.forEach((w) => {
       const test = line + w + ' ';
       if (ctx.measureText(test).width > 620 && line) {
-        ctx.fillText(line, 32, y); line = w + ' '; y += 18;
-      } else { line = test; }
+        ctx.fillText(line, 32, y);
+        line = w + ' ';
+        y += 18;
+      } else {
+        line = test;
+      }
     });
     ctx.fillText(line, 32, y);
 
     // Divider 3
     ctx.strokeStyle = 'rgba(255,0,60,.35)';
-    ctx.beginPath(); ctx.moveTo(32, 384); ctx.lineTo(668, 384); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(32, 384);
+    ctx.lineTo(668, 384);
+    ctx.stroke();
 
     // Footer
     ctx.fillStyle = 'rgba(255,0,60,.35)';

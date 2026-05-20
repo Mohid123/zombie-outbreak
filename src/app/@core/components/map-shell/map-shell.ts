@@ -1,6 +1,13 @@
 import {
-  ChangeDetectionStrategy, Component, inject,
-  OnInit, OnDestroy, ChangeDetectorRef, signal, computed,
+  ChangeDetectionStrategy,
+  Component,
+  inject,
+  OnInit,
+  OnDestroy,
+  ChangeDetectorRef,
+  signal,
+  computed,
+  ViewContainerRef,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
@@ -17,44 +24,52 @@ import { NarrativeService } from '../../services/narrative.service';
 import { SurvivalService } from '../../services/survival.service';
 import { AppState } from '../../../app.state';
 import {
-  TickSpeed, VariantType,
-  tickSpeedConstant, variantType,
-  SimPhase, EscapeStatus,
+  TickSpeed,
+  VariantType,
+  tickSpeedConstant,
+  variantType,
+  SimPhase,
+  EscapeStatus,
 } from '../../interfaces/state.interface';
 import * as h3 from 'h3-js';
+import { ShareService } from '../../services/share';
 
 interface CityJSON {
-  cells:           SimCell[];
-  center:          [number, number];
+  cells: SimCell[];
+  center: [number, number];
   totalPopulation: number;
-  displayName:     string;
-  roadGraph?:      RoadGraph;
-  buildings?:      GeoJSON.Feature[];
-  parks?:          GeoJSON.Feature[];
-  water?:          GeoJSON.Feature[];
+  displayName: string;
+  roadGraph?: RoadGraph;
+  buildings?: GeoJSON.Feature[];
+  parks?: GeoJSON.Feature[];
+  water?: GeoJSON.Feature[];
 }
 
 const SPEEDS: { label: string; ms: TickSpeed }[] = [
-  { label: '1×',  ms: tickSpeedConstant['1x']  },
-  { label: '2×',  ms: tickSpeedConstant['2x']  },
-  { label: '5×',  ms: tickSpeedConstant['5x']  },
+  { label: '1×', ms: tickSpeedConstant['1x'] },
+  { label: '2×', ms: tickSpeedConstant['2x'] },
+  { label: '5×', ms: tickSpeedConstant['5x'] },
   { label: '10×', ms: tickSpeedConstant['10x'] },
 ];
 const VARIANTS: { label: string; value: VariantType }[] = [
   { label: 'STANDARD', value: variantType.standard },
-  { label: 'FAST',     value: variantType.fast     },
-  { label: 'HORDE',    value: variantType.horde    },
+  { label: 'FAST', value: variantType.fast },
+  { label: 'HORDE', value: variantType.horde },
 ];
 
 const ESCAPE_LABELS: Record<EscapeStatus, string> = {
-  open:    '🟢 ESCAPE WINDOW OPEN',
-  flee:    '🟡 FLEE NOW',
+  open: '🟢 ESCAPE WINDOW OPEN',
+  flee: '🟡 FLEE NOW',
   closing: '🔴 ESCAPE WINDOW CLOSING',
-  closed:  '💀 ESCAPE WINDOW CLOSED',
+  closed: '💀 ESCAPE WINDOW CLOSED',
   unknown: '⬜ LOCATING...',
 };
 const ESCAPE_CLASSES: Record<EscapeStatus, string> = {
-  open: 'esc-open', flee: 'esc-flee', closing: 'esc-closing', closed: 'esc-closed', unknown: '',
+  open: 'esc-open',
+  flee: 'esc-flee',
+  closing: 'esc-closing',
+  closed: 'esc-closed',
+  unknown: '',
 };
 
 @Component({
@@ -62,211 +77,227 @@ const ESCAPE_CLASSES: Record<EscapeStatus, string> = {
   imports: [CommonModule, VerdictComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-<div class="shell">
-  <!-- MAP (always mounted, never re-created) -->
-  <div id="map"></div>
+    <div class="shell">
+      <!-- MAP (always mounted, never re-created) -->
+      <div id="map"></div>
 
-  <!-- Vignette + scanlines -->
-  <div class="vignette" aria-hidden="true"></div>
-  <div class="scanlines-overlay" aria-hidden="true"></div>
+      <!-- Vignette + scanlines -->
+      <div class="vignette" aria-hidden="true"></div>
+      <div class="scanlines-overlay" aria-hidden="true"></div>
 
-  <!-- PHASE: placing user (FIRST) -->
-  @if (simPhase() === 'placing-user') {
-    <div class="overlay-instruction anim-fade-in">
-      <div class="oi-label">STEP 1 OF 2</div>
-      <div class="oi-title">WHERE DO YOU LIVE?</div>
-      <div class="oi-sub">Pin your location — we'll track whether you can escape</div>
-      <button class="oi-btn" (click)="randomiseUserLocation()">🎲 RANDOMISE MY LOCATION</button>
-    </div>
-  }
-
-  <!-- PHASE: placing patient zero (SECOND) -->
-  @if (simPhase() === 'placing-pz') {
-    <div class="overlay-instruction anim-fade-in">
-      <div class="oi-label">STEP 2 OF 2</div>
-      <div class="oi-title">DROP GROUND ZERO</div>
-      <div class="oi-sub">Choose where the outbreak begins — or let fate decide</div>
-      <button class="oi-btn surprise" (click)="surpriseMe()">🎲 SURPRISE ME</button>
-    </div>
-  }
-
-  <!-- PHASE: running -->
-  @if (simPhase() === 'running') {
-
-    <!-- Stats HUD -->
-    <div class="hud stats-hud panel">
-      <div class="hud-title">☣ OUTBREAK STATUS</div>
-      <div class="stat-grid">
-        <div class="stat-item">
-          <span class="si-icon">💀</span>
-          <span class="si-val">{{ state.totalDead() | number }}</span>
-          <span class="si-lbl">DEAD</span>
-        </div>
-        <div class="stat-item">
-          <span class="si-icon">🧟</span>
-          <span class="si-val">{{ state.totalZombie() | number }}</span>
-          <span class="si-lbl">TURNED</span>
-        </div>
-        <div class="stat-item">
-          <span class="si-icon">✅</span>
-          <span class="si-val">{{ state.totalSurvivors() | number }}</span>
-          <span class="si-lbl">SURVIVORS</span>
-        </div>
-        <div class="stat-item">
-          <span class="si-icon">⏱</span>
-          <span class="si-val">{{ state.tick() }}</span>
-          <span class="si-lbl">HOUR{{ state.tick() !== 1 ? 'S' : '' }}</span>
-        </div>
-      </div>
-      <div class="overrun-bar">
-        <div class="ob-label">CITY OVERRUN</div>
-        <div class="ob-track">
-          <div class="ob-fill" [style.width.%]="(state.cityOverrunPct() * 100)"></div>
-        </div>
-        <div class="ob-pct">{{ (state.cityOverrunPct() * 100) | number:'1.1-1' }}%</div>
-      </div>
-    </div>
-
-    <!-- Escape window (only if user placed) -->
-    @if (state.userCell()) {
-      <div class="hud escape-hud panel" [class]="escapeClass()">
-        <div class="esc-status">{{ escapeLabel() }}</div>
-        @if (state.escapeStatus() === 'flee') {
-          <div class="esc-urgency">Your neighbours are infected. Leave NOW.</div>
-        }
-        @if (state.escapeStatus() === 'closing') {
-          <div class="esc-urgency">Infected detected in your cell. Limited time.</div>
-        }
-        @if (state.escapeStatus() === 'closed') {
-          <div class="esc-urgency">Escape window has closed. You're surrounded.</div>
-        }
-      </div>
-    }
-
-    <!-- Legend -->
-    <div class="hud legend-hud panel">
-      <div class="hud-title">INFECTION MAP</div>
-      @for (entry of legend; track entry.label) {
-        <div class="legend-row">
-          <span class="leg-swatch" [style.background]="entry.color"></span>
-          <span class="leg-label">{{ entry.label }}</span>
+      <!-- PHASE: placing user (FIRST) -->
+      @if (simPhase() === 'placing-user') {
+        <div class="overlay-instruction anim-fade-in">
+          <div class="oi-label">STEP 1 OF 2</div>
+          <div class="oi-title">WHERE DO YOU LIVE?</div>
+          <div class="oi-sub">Pin your location — we'll track whether you can escape</div>
+          <button class="oi-btn" (click)="randomiseUserLocation()">🎲 RANDOMISE MY LOCATION</button>
         </div>
       }
-    </div>
 
-    <!-- Controls HUD -->
-    <div class="hud controls-hud panel">
-      <!-- Row 1 (desktop: inline) / Row 1 (mobile: top row) -->
-      <div class="ctrl-row ctrl-row-primary">
-        <button class="ctrl-btn pause-btn" (click)="togglePause()" [title]="state.isRunning() ? 'Pause' : 'Resume'">
-          {{ state.isRunning() ? '⏸' : '▶' }}
-        </button>
-        <div class="ctrl-divider"></div>
-        <div class="ctrl-group">
-          <span class="ctrl-label">SPEED</span>
-          <div class="btn-row">
-            @for (s of speeds; track s.ms) {
-              <button class="ctrl-btn" [class.active]="state.tickSpeed() === s.ms" (click)="setSpeed(s.ms)">
-                {{ s.label }}
-              </button>
-            }
-          </div>
-        </div>
-        <div class="ctrl-divider"></div>
-        <button class="ctrl-btn mute-btn" (click)="toggleMute()" [title]="audio.muted() ? 'Unmute' : 'Mute'">
-          {{ audio.muted() ? '🔇' : '🔊' }}
-        </button>
-      </div>
-
-      <!-- Row 2 (desktop: inline after divider) / Row 2 (mobile: strain row) -->
-      <div class="ctrl-divider ctrl-main-divider"></div>
-      <div class="ctrl-row ctrl-row-strain">
-        <div class="ctrl-group">
-          <span class="ctrl-label">STRAIN</span>
-          <div class="btn-row">
-            @for (v of variants; track v.value) {
-              <button class="ctrl-btn" [class.active]="state.variant() === v.value" (click)="setVariant(v.value)">
-                {{ v.label }}
-              </button>
-            }
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- News feed -->
-    <div class="news-feed">
-      @for (msg of narrative.messages(); track msg.id) {
-        <div class="news-item" [class]="'ni-' + msg.category">
-          <span class="ni-tick">[H+{{ msg.timestamp }}]</span>
-          <span class="ni-text">{{ msg.text }}</span>
+      <!-- PHASE: placing patient zero (SECOND) -->
+      @if (simPhase() === 'placing-pz') {
+        <div class="overlay-instruction anim-fade-in">
+          <div class="oi-label">STEP 2 OF 2</div>
+          <div class="oi-title">DROP GROUND ZERO</div>
+          <div class="oi-sub">Choose where the outbreak begins — or let fate decide</div>
+          <button class="oi-btn surprise" (click)="surpriseMe()">🎲 SURPRISE ME</button>
         </div>
       }
+
+      <!-- PHASE: running -->
+      @if (simPhase() === 'running') {
+        <!-- Stats HUD -->
+        <div class="hud stats-hud panel">
+          <div class="hud-title">☣ OUTBREAK STATUS</div>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <span class="si-icon">💀</span>
+              <span class="si-val">{{ state.totalDead() | number }}</span>
+              <span class="si-lbl">DEAD</span>
+            </div>
+            <div class="stat-item">
+              <span class="si-icon">🧟</span>
+              <span class="si-val">{{ state.totalZombie() | number }}</span>
+              <span class="si-lbl">TURNED</span>
+            </div>
+            <div class="stat-item">
+              <span class="si-icon">✅</span>
+              <span class="si-val">{{ state.totalSurvivors() | number }}</span>
+              <span class="si-lbl">SURVIVORS</span>
+            </div>
+            <div class="stat-item">
+              <span class="si-icon">⏱</span>
+              <span class="si-val">{{ state.tick() }}</span>
+              <span class="si-lbl">HOUR{{ state.tick() !== 1 ? 'S' : '' }}</span>
+            </div>
+          </div>
+          <div class="overrun-bar">
+            <div class="ob-label">CITY OVERRUN</div>
+            <div class="ob-track">
+              <div class="ob-fill" [style.width.%]="state.cityOverrunPct() * 100"></div>
+            </div>
+            <div class="ob-pct">{{ state.cityOverrunPct() * 100 | number: '1.1-1' }}%</div>
+          </div>
+        </div>
+
+        <!-- Escape window (only if user placed) -->
+        @if (state.userCell()) {
+          <div class="hud escape-hud panel" [class]="escapeClass()">
+            <div class="esc-status">{{ escapeLabel() }}</div>
+            @if (state.escapeStatus() === 'flee') {
+              <div class="esc-urgency">Your neighbours are infected. Leave NOW.</div>
+            }
+            @if (state.escapeStatus() === 'closing') {
+              <div class="esc-urgency">Infected detected in your cell. Limited time.</div>
+            }
+            @if (state.escapeStatus() === 'closed') {
+              <div class="esc-urgency">Escape window has closed. You're surrounded.</div>
+            }
+          </div>
+        }
+
+        <!-- Legend -->
+        <div class="hud legend-hud panel">
+          <div class="hud-title">INFECTION MAP</div>
+          @for (entry of legend; track entry.label) {
+            <div class="legend-row">
+              <span class="leg-swatch" [style.background]="entry.color"></span>
+              <span class="leg-label">{{ entry.label }}</span>
+            </div>
+          }
+        </div>
+
+        <!-- Controls HUD -->
+        <div class="hud controls-hud panel">
+          <!-- Row 1 (desktop: inline) / Row 1 (mobile: top row) -->
+          <div class="ctrl-row ctrl-row-primary">
+            <button
+              class="ctrl-btn pause-btn"
+              (click)="togglePause()"
+              [title]="state.isRunning() ? 'Pause' : 'Resume'"
+            >
+              {{ state.isRunning() ? '⏸' : '▶' }}
+            </button>
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-group">
+              <span class="ctrl-label">SPEED</span>
+              <div class="btn-row">
+                @for (s of speeds; track s.ms) {
+                  <button
+                    class="ctrl-btn"
+                    [class.active]="state.tickSpeed() === s.ms"
+                    (click)="setSpeed(s.ms)"
+                  >
+                    {{ s.label }}
+                  </button>
+                }
+              </div>
+            </div>
+            <div class="ctrl-divider"></div>
+            <button
+              class="ctrl-btn mute-btn"
+              (click)="toggleMute()"
+              [title]="audio.muted() ? 'Unmute' : 'Mute'"
+            >
+              {{ audio.muted() ? '🔇' : '🔊' }}
+            </button>
+          </div>
+
+          <!-- Row 2 (desktop: inline after divider) / Row 2 (mobile: strain row) -->
+          <div class="ctrl-divider ctrl-main-divider"></div>
+          <div class="ctrl-row ctrl-row-strain">
+            <div class="ctrl-group">
+              <span class="ctrl-label">STRAIN</span>
+              <div class="btn-row">
+                @for (v of variants; track v.value) {
+                  <button
+                    class="ctrl-btn"
+                    [class.active]="state.variant() === v.value"
+                    (click)="setVariant(v.value)"
+                  >
+                    {{ v.label }}
+                  </button>
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- News feed -->
+        <div class="news-feed">
+          @for (msg of narrative.messages(); track msg.id) {
+            <div class="news-item" [class]="'ni-' + msg.category">
+              <span class="ni-tick">[H+{{ msg.timestamp }}]</span>
+              <span class="ni-text">{{ msg.text }}</span>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- WATER FAIL -->
+      @if (waterFail()) {
+        <div class="verdict-overlay anim-fade-in">
+          <div class="water-fail-card panel">
+            <div class="wf-icon">🌊</div>
+            <div class="wf-headline">OUTBREAK CONTAINED</div>
+            <div class="wf-sub">REASON: PATIENT ZERO CANNOT SWIM</div>
+            <div class="wf-divider"></div>
+            <p class="wf-body">
+              You dropped Patient Zero into open water.<br />
+              Turns out zombies sink. The outbreak lasted approximately<br />
+              <strong>4 seconds</strong> before being resolved by the ocean.<br /><br />
+              CDC officials are calling it<br />"the most embarrassing pandemic attempt on record."
+            </p>
+            <div class="wf-divider"></div>
+            <button class="oi-btn surprise" (click)="retryAfterWater()">
+              🗺 &nbsp;TRY DRY LAND THIS TIME
+            </button>
+          </div>
+        </div>
+      }
+
+      <!-- PHASE: verdict overlay -->
+      @if (simPhase() === 'verdict') {
+        <div class="verdict-overlay anim-fade-in">
+          <app-verdict></app-verdict>
+        </div>
+      }
+
+      <!-- Cell hover tooltip (raw DOM, outside CD) -->
+      <div id="cell-tooltip" class="cell-tooltip" style="display:none"></div>
     </div>
-
-  }
-
-  <!-- WATER FAIL -->
-  @if (waterFail()) {
-    <div class="verdict-overlay anim-fade-in">
-      <div class="water-fail-card panel">
-        <div class="wf-icon">🌊</div>
-        <div class="wf-headline">OUTBREAK CONTAINED</div>
-        <div class="wf-sub">REASON: PATIENT ZERO CANNOT SWIM</div>
-        <div class="wf-divider"></div>
-        <p class="wf-body">
-          You dropped Patient Zero into open water.<br>
-          Turns out zombies sink. The outbreak lasted approximately<br>
-          <strong>4 seconds</strong> before being resolved by the ocean.<br><br>
-          CDC officials are calling it<br>"the most embarrassing pandemic attempt on record."
-        </p>
-        <div class="wf-divider"></div>
-        <button class="oi-btn surprise" (click)="retryAfterWater()">
-          🗺 &nbsp;TRY DRY LAND THIS TIME
-        </button>
-      </div>
-    </div>
-  }
-
-  <!-- PHASE: verdict overlay -->
-  @if (simPhase() === 'verdict') {
-    <div class="verdict-overlay anim-fade-in">
-      <app-verdict></app-verdict>
-    </div>
-  }
-
-  <!-- Cell hover tooltip (raw DOM, outside CD) -->
-  <div id="cell-tooltip" class="cell-tooltip" style="display:none"></div>
-</div>
   `,
   styleUrl: './map-shell.css',
 })
 export class MapShell implements OnInit, OnDestroy {
   private mapService = inject(MapService);
   private simService = inject(SimulationService);
-  private http       = inject(HttpClient);
-  private router     = inject(Router);
-  protected state    = inject(AppState);
-  private cdr        = inject(ChangeDetectorRef);
-  protected audio    = inject(AudioService);
+  private http = inject(HttpClient);
+  private router = inject(Router);
+  protected state = inject(AppState);
+  private cdr = inject(ChangeDetectorRef);
+  protected audio = inject(AudioService);
   protected narrative = inject(NarrativeService);
-  private survival   = inject(SurvivalService);
+  private survival = inject(SurvivalService);
 
   private mapLoaded$ = toObservable(this.mapService.isLoaded);
   private cityData: CityJSON | null = null;
   private pendingVerdictAtTick = -1;
   readonly waterFail = signal(false);
+  private readonly TIMELAPSE_FRAME_EVERY = 4;
+  private shareService = inject(ShareService);
 
-  readonly speeds   = SPEEDS;
+  readonly speeds = SPEEDS;
   readonly variants = VARIANTS;
-  readonly legend   = [
+  readonly legend = [
     { color: '#cc0020', label: 'INFECTED — Early spread' },
     { color: '#8a0060', label: 'SPREADING — Growing' },
     { color: '#4a0080', label: 'OVERRUN — Critical' },
     { color: '#2a0040', label: 'ABANDONED — All lost' },
   ];
 
-  readonly simPhase    = computed(() => this.state.simPhase());
+  readonly simPhase = computed(() => this.state.simPhase());
   readonly escapeLabel = computed(() => ESCAPE_LABELS[this.state.escapeStatus()]);
   readonly escapeClass = computed(() => ESCAPE_CLASSES[this.state.escapeStatus()]);
 
@@ -275,36 +306,50 @@ export class MapShell implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     const cityConfig = this.state.selectedCityConfig();
-    if (!cityConfig) { this.router.navigate(['/select']); return; }
+    if (!cityConfig) {
+      this.router.navigate(['/select']);
+      return;
+    }
 
     this.narrative.init();
     this.mapService.init('map', cityConfig.center);
 
     this.mapLoaded$
-      .pipe(filter(l => l), take(1))
-      .subscribe(() => this.onMapReady());
+      .pipe(
+        filter((l) => l),
+        take(1),
+      )
+      .subscribe(() => {
+        this.onMapReady()
+      });
 
-    this.state.tickResult$.subscribe(result => {
+    this.state.tickResult$.subscribe((result) => {
       this.mapService.updateHexLayer(result.updatedCells);
       this.mapService.spawnTracers(result.spreadEvents);
 
-      const tick  = this.state.tick();
+      const tick = this.state.tick();
       const dirty = result.updatedCells;
 
-        // Update escape window
+      // Update escape window
       this.updateEscapeWindow(dirty);
 
       // Drive audio mix from population spread (infected+zombie+dead / total)
       // cityOverrunPct only counts fully-overrun cells — too slow with new SIZD settings.
       // Population spread climbs as soon as infection touches anyone.
-      const survivors  = this.state.totalSurvivors();
-      const affected   = this.state.totalInfected() + this.state.totalZombie() + this.state.totalDead();
-      const totalPop   = survivors + affected;
-      const spreadPct  = totalPop > 0 ? affected / totalPop : 0;
+      const survivors = this.state.totalSurvivors();
+      const affected =
+        this.state.totalInfected() + this.state.totalZombie() + this.state.totalDead();
+      const totalPop = survivors + affected;
+      const spreadPct = totalPop > 0 ? affected / totalPop : 0;
       this.audio.updateMix(spreadPct);
 
       // Narrative messages — keyed to escape status, not raw cell status
-      this.narrative.onTick(tick, result.spreadEvents.length, this.state.cityOverrunPct(), this.state.escapeStatus());
+      this.narrative.onTick(
+        tick,
+        result.spreadEvents.length,
+        this.state.cityOverrunPct(),
+        this.state.escapeStatus(),
+      );
 
       // No markForCheck needed here — all template bindings are signals; Angular's
       // reactive graph schedules re-render automatically when signal values change.
@@ -331,6 +376,7 @@ export class MapShell implements OnInit, OnDestroy {
         // (e.g. cell infected but never quite overrun before sim ended)
         this.enterVerdict();
       }
+      this.onSimEndExtras();
       // If pendingVerdictAtTick is already scheduled, it fires on the next tick naturally
     });
 
@@ -351,9 +397,10 @@ export class MapShell implements OnInit, OnDestroy {
 
       // Defer heavy non-critical work so the first paint is fast.
       // Road graph and city features are not needed until the sim starts.
-      const idle = (typeof requestIdleCallback !== 'undefined')
-        ? (fn: () => void) => requestIdleCallback(fn)
-        : (fn: () => void) => setTimeout(fn, 80);
+      const idle =
+        typeof requestIdleCallback !== 'undefined'
+          ? (fn: () => void) => requestIdleCallback(fn)
+          : (fn: () => void) => setTimeout(fn, 80);
 
       idle(() => {
         if (city.roadGraph) this.mapService.initRoadGraph(city.roadGraph);
@@ -364,7 +411,7 @@ export class MapShell implements OnInit, OnDestroy {
       });
 
       // Wire map click for patient zero / user placement
-      this.mapService.onMapClick(coord => this.handleMapClick(coord));
+      this.mapService.onMapClick((coord) => this.handleMapClick(coord));
 
       // Wire hover tooltip
       this.mapService.onCellHover((props, screenXY) => this.updateTooltip(props, screenXY));
@@ -379,7 +426,7 @@ export class MapShell implements OnInit, OnDestroy {
     if (phase === 'placing-user') {
       this.audio.click();
       this.placeUser([lng, lat]);
-    // Step 2: user drops ground zero
+      // Step 2: user drops ground zero
     } else if (phase === 'placing-pz') {
       this.audio.click();
       this.dropGroundZero([lng, lat]);
@@ -391,9 +438,10 @@ export class MapShell implements OnInit, OnDestroy {
     if (!this.cityData) return;
     this.audio.click();
     // roads !== 'none' guarantees the cell is on land — water cells never have road data
-    const candidates = this.cityData.cells.filter(c =>
-      c.population > 200 && c.landUse !== 'water' && c.roads !== 'none');
-    const fallback = this.cityData.cells.filter(c => c.population > 200 && c.landUse !== 'water');
+    const candidates = this.cityData.cells.filter(
+      (c) => c.population > 200 && c.landUse !== 'water' && c.roads !== 'none',
+    );
+    const fallback = this.cityData.cells.filter((c) => c.population > 200 && c.landUse !== 'water');
     const pool = candidates.length > 0 ? candidates : fallback;
     const cell = pool[Math.floor(Math.random() * pool.length)] ?? this.cityData.cells[0];
     this.placeUser(cell.center);
@@ -417,25 +465,27 @@ export class MapShell implements OnInit, OnDestroy {
 
     // roads !== 'none' excludes water cells that OSM left untagged (they default to
     // 'residential' in preprocessing but have no road intersections over open water)
-    const onLand = this.cityData.cells.filter(c =>
-      c.population > 1000 && c.landUse !== 'water' && c.roads !== 'none');
+    const onLand = this.cityData.cells.filter(
+      (c) => c.population > 1000 && c.landUse !== 'water' && c.roads !== 'none',
+    );
 
     // Prefer ground zero near the user so the simulation feels personal
     const userCoord = this.state.userCoord();
     let pool = onLand;
     if (userCoord && onLand.length > 0) {
       const [uLng, uLat] = userCoord;
-      const nearby = onLand.filter(c => {
+      const nearby = onLand.filter((c) => {
         const dLng = c.center[0] - uLng;
         const dLat = c.center[1] - uLat;
-        return (dLng * dLng + dLat * dLat) < 0.0225; // ≈15 km radius
+        return dLng * dLng + dLat * dLat < 0.0225; // ≈15 km radius
       });
       if (nearby.length > 0) pool = nearby;
     }
 
-    const fallback = this.cityData.cells.filter(c => c.population > 0 && c.landUse !== 'water');
+    const fallback = this.cityData.cells.filter((c) => c.population > 0 && c.landUse !== 'water');
     const candidates = pool.length > 0 ? pool : fallback;
-    const cell = candidates[Math.floor(Math.random() * candidates.length)] ?? this.cityData.cells[0];
+    const cell =
+      candidates[Math.floor(Math.random() * candidates.length)] ?? this.cityData.cells[0];
     this.dropGroundZero(cell.center);
   }
 
@@ -444,10 +494,11 @@ export class MapShell implements OnInit, OnDestroy {
     const cellId = h3.latLngToCell(lat, lng, 9);
 
     // Check if the cell is uninhabitable (water, park, zero population)
-    const cell = this.cityData?.cells.find(c => c.cellId === cellId)
-      ?? this.cityData?.cells.reduce((best, c) => {
-        const d = (c.center[0]-lng)**2 + (c.center[1]-lat)**2;
-        const bd = (best.center[0]-lng)**2 + (best.center[1]-lat)**2;
+    const cell =
+      this.cityData?.cells.find((c) => c.cellId === cellId) ??
+      this.cityData?.cells.reduce((best, c) => {
+        const d = (c.center[0] - lng) ** 2 + (c.center[1] - lat) ** 2;
+        const bd = (best.center[0] - lng) ** 2 + (best.center[1] - lat) ** 2;
         return d < bd ? c : best;
       }, this.cityData.cells[0]);
 
@@ -472,11 +523,14 @@ export class MapShell implements OnInit, OnDestroy {
     this.state.setEscapeStatus('open');
     this.narrative.push(
       `⚠ OUTBREAK DETECTED — ${this.state.selectedCityConfig()!.displayName}. CONTAINMENT STATUS: FAILED.`,
-      'event', 0,
+      'event',
+      0,
     );
     this.audio.startAmbient();
     this.simService.init(this.cityData.cells, Date.now());
     this.simService.start();
+    const cityId = this.state.selectedCityConfig()?.id ?? '';
+    this.mapService.addLocationMarkers(cityId);
     this.cdr.markForCheck();
   }
 
@@ -484,7 +538,7 @@ export class MapShell implements OnInit, OnDestroy {
     const userCell = this.state.userCell();
     if (!userCell) return;
 
-    const dirtyMap = new Map(dirty.map(c => [c.cellId, c]));
+    const dirtyMap = new Map(dirty.map((c) => [c.cellId, c]));
 
     // Check own cell
     const ownUpdated = dirtyMap.get(userCell);
@@ -493,8 +547,7 @@ export class MapShell implements OnInit, OnDestroy {
         this.state.setEscapeStatus('closed');
         this.state.setUserOverrunTick(this.state.tick());
         // Schedule verdict 10 ticks later — city keeps spreading, sound layers keep building
-        if (this.pendingVerdictAtTick < 0)
-          this.pendingVerdictAtTick = this.state.tick() + 10;
+        if (this.pendingVerdictAtTick < 0) this.pendingVerdictAtTick = this.state.tick() + 10;
         return;
       }
       if (ownUpdated.status === 'infected' && this.state.userInfectedTick() === -1) {
@@ -507,8 +560,8 @@ export class MapShell implements OnInit, OnDestroy {
     if (this.state.escapeStatus() === 'closed' || this.state.escapeStatus() === 'closing') return;
 
     // Check ring-1 neighbours
-    const neighbours = h3.gridDisk(userCell, 1).filter(id => id !== userCell);
-    const anyNeighbourInfected = neighbours.some(nid => {
+    const neighbours = h3.gridDisk(userCell, 1).filter((id) => id !== userCell);
+    const anyNeighbourInfected = neighbours.some((nid) => {
       const nc = dirtyMap.get(nid) ?? this.state.grid.get(nid);
       return nc && nc.status !== 'clean';
     });
@@ -541,11 +594,14 @@ export class MapShell implements OnInit, OnDestroy {
     screenXY: [number, number] | null,
   ): void {
     if (!this.tooltipEl) return;
-    if (!props || !screenXY) { this.tooltipEl.style.display = 'none'; return; }
+    if (!props || !screenXY) {
+      this.tooltipEl.style.display = 'none';
+      return;
+    }
 
-    const ratio  = (props['zombieRatio'] as number ?? 0);
-    const status = (props['status'] as string ?? 'clean');
-    const pct    = (ratio * 100).toFixed(1);
+    const ratio = (props['zombieRatio'] as number) ?? 0;
+    const status = (props['status'] as string) ?? 'clean';
+    const pct = (ratio * 100).toFixed(1);
 
     this.tooltipEl.innerHTML =
       `<div class="tt-status tt-${status}">${status.toUpperCase()}</div>` +
@@ -553,8 +609,8 @@ export class MapShell implements OnInit, OnDestroy {
 
     const el = this.tooltipEl;
     el.style.display = 'block';
-    el.style.left    = `${screenXY[0] + 14}px`;
-    el.style.top     = `${screenXY[1] - 10}px`;
+    el.style.left = `${screenXY[0] + 14}px`;
+    el.style.top = `${screenXY[1] - 10}px`;
   }
 
   // Controls
@@ -574,8 +630,11 @@ export class MapShell implements OnInit, OnDestroy {
 
   togglePause(): void {
     this.audio.click();
-    if (this.state.isRunning()) { this.simService.pause(); }
-    else if (this.state.status() === 'paused') { this.simService.resume(); }
+    if (this.state.isRunning()) {
+      this.simService.pause();
+    } else if (this.state.status() === 'paused') {
+      this.simService.resume();
+    }
     this.cdr.markForCheck();
   }
 
@@ -588,24 +647,57 @@ export class MapShell implements OnInit, OnDestroy {
     if (!this.cityData) return;
 
     // Save placement before reset — resetSimState() clears these signals
-    const pzCell   = this.state.patientZeroCell();
-    const pzCoord  = this.state.patientZeroCoord();
+    const pzCell = this.state.patientZeroCell();
+    const pzCoord = this.state.patientZeroCoord();
     const userCell = this.state.userCell();
     const userCoord = this.state.userCoord();
 
     this.simService.reset();
     this.mapService.resetSimLayers();
+    this.mapService.clearLocationMarkers();
     this.narrative.init();
     this.pendingVerdictAtTick = -1;
     this.waterFail.set(false);
 
     // Restore placement so the worker seeds the same patient-zero cell
-    if (pzCell)   this.state.setPatientZeroCell(pzCell);
-    if (pzCoord)  this.state.setPatientZeroCoord(pzCoord);
+    if (pzCell) this.state.setPatientZeroCell(pzCell);
+    if (pzCoord) this.state.setPatientZeroCoord(pzCoord);
     if (userCell) this.state.setUserCell(userCell);
     if (userCoord) this.state.setUserCoord(userCoord);
 
     this.startSimulation();
+  }
+
+  //Called when sim ends (in simEnded$ subscription)
+  private async onSimEndExtras(): Promise<void> {
+    const cityName =
+      this.state.selectedCityConfig()?.displayName ?? this.state.selectedCity()?.name ?? 'city';
+
+    const frozen = this.state.finalStats();
+    const stats = frozen ?? {
+      totalSurvivors: this.state.totalSurvivors(),
+      totalInfected: this.state.totalInfected(),
+      totalZombie: this.state.totalZombie(),
+      totalDead: this.state.totalDead(),
+      survivalRate: this.state.cityOverrunPct() === 0 ? 1 : 1 - this.state.cityOverrunPct(),
+      cityOverrunPct: this.state.cityOverrunPct(),
+      hoursElapsed: this.state.tick(),
+    };
+
+    const cityCenter =
+      this.state.cityCenter() ??
+      this.state.selectedCityConfig()?.center ??
+      ([0, 0] as [number, number]);
+
+    await this.shareService.buildAndShorten(
+      cityName,
+      cityCenter,
+      this.state.seed(),
+      this.state.variant(),
+      this.state.patientZeroCell() ?? '',
+      stats,
+      this.state.finalTick() || this.state.tick(),
+    );
   }
 
   ngOnDestroy(): void {

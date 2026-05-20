@@ -4,32 +4,173 @@ import { environment } from '../../../environments/environment';
 import { SimCell, SpreadEvent } from '../interfaces/simulation.model';
 import * as h3 from 'h3-js';
 
-const TRACER_TTL_MS     = 750;
+const TRACER_TTL_MS = 750;
 const MAX_COMPLETED_LINES = 120; // hard cap on persistent spread-line history
-const MAX_ROUTE_M       = 2000;
-const RING_TTL_MS       = 1400;
+const MAX_ROUTE_M = 2000;
+const RING_TTL_MS = 1400;
 const MAX_RINGS_PER_TICK = 10;
-const BUILDING_RES      = 9;
+const BUILDING_RES = 9;
+
+export interface LocationMarkerDef {
+  id: string;
+  label: string;
+  icon: string;
+  videoSrc: string;
+  coords: [number, number];
+}
+
+export const LOCATION_MARKERS: Record<string, LocationMarkerDef[]> = {
+  newyork: [
+    {
+      id: 'hospital',
+      label: 'NewYork-Presbyterian',
+      icon: '🏥',
+      videoSrc: '/videos/hospital.mp4',
+      coords: [-73.9442, 40.7682],
+    },
+    {
+      id: 'stadium',
+      label: 'Yankee Stadium',
+      icon: '🏟',
+      videoSrc: '/videos/police.mp4',
+      coords: [-73.9262, 40.8296],
+    },
+    {
+      id: 'police',
+      label: 'NYPD Headquarters',
+      icon: '🚔',
+      videoSrc: '/videos/police.mp4',
+      coords: [-74.0028, 40.7127],
+    },
+    {
+      id: 'airport',
+      label: 'JFK Airport',
+      icon: '✈',
+      videoSrc: '/videos/airport.mp4',
+      coords: [-73.7789, 40.6413],
+    },
+  ],
+  london: [
+    {
+      id: 'hospital',
+      label: "St Thomas' Hospital",
+      icon: '🏥',
+      videoSrc: '/videos/hospital.mp4',
+      coords: [-0.1187, 51.4987],
+    },
+    {
+      id: 'stadium',
+      label: 'Wembley Stadium',
+      icon: '🏟',
+      videoSrc: '/videos/police.mp4',
+      coords: [-0.2796, 51.556],
+    },
+    {
+      id: 'police',
+      label: 'New Scotland Yard',
+      icon: '🚔',
+      videoSrc: '/videos/police.mp4',
+      coords: [-0.1283, 51.4965],
+    },
+    {
+      id: 'airport',
+      label: 'Heathrow Airport',
+      icon: '✈',
+      videoSrc: '/videos/airport.mp4',
+      coords: [-0.4543, 51.4775],
+    },
+  ],
+  lahore: [
+    {
+      id: 'hospital',
+      label: 'Services Hospital',
+      icon: '🏥',
+      videoSrc: '/videos/hospital.mp4',
+      coords: [74.3208, 31.5448],
+    },
+    {
+      id: 'stadium',
+      label: 'Gaddafi Stadium',
+      icon: '🏟',
+      videoSrc: '/videos/police.mp4',
+      coords: [74.3219, 31.5135],
+    },
+    {
+      id: 'police',
+      label: 'Lahore Police HQ',
+      icon: '🚔',
+      videoSrc: '/videos/police.mp4',
+      coords: [74.3436, 31.5497],
+    },
+    {
+      id: 'airport',
+      label: 'Allama Iqbal Airport',
+      icon: '✈',
+      videoSrc: '/videos/airport.mp4',
+      coords: [74.402, 31.5224],
+    },
+  ],
+  tokyo: [
+    {
+      id: 'hospital',
+      label: 'Tokyo Med University',
+      icon: '🏥',
+      videoSrc: '/videos/hospital.mp4',
+      coords: [139.6985, 35.6936],
+    },
+    {
+      id: 'stadium',
+      label: 'Japan National Stadium',
+      icon: '🏟',
+      videoSrc: '/videos/police.mp4',
+      coords: [139.7143, 35.6782],
+    },
+    {
+      id: 'police',
+      label: 'Metropolitan Police',
+      icon: '🚔',
+      videoSrc: '/videos/police.mp4',
+      coords: [139.7454, 35.6838],
+    },
+    {
+      id: 'airport',
+      label: 'Haneda Airport',
+      icon: '✈',
+      videoSrc: '/videos/airport.mp4',
+      coords: [139.7798, 35.5494],
+    },
+  ],
+};
 
 // Road graph (loaded from preprocessed city JSON)
 export interface RoadGraph {
   nodes: [number, number][];
-  edges: Array<{ from: number; to: number; dist: number; road: string; coords: [number, number][] }>;
+  edges: Array<{
+    from: number;
+    to: number;
+    dist: number;
+    road: string;
+    coords: [number, number][];
+  }>;
 }
-interface RoadEdge { to: number; dist: number; coords: [number, number][] }
+interface RoadEdge {
+  to: number;
+  dist: number;
+  coords: [number, number][];
+}
 
 // Tracer
 interface Tracer {
-  from:       [number, number];
-  to:         [number, number];
-  startTime:  number;
-  jitter:     number;
+  from: [number, number];
+  to: [number, number];
+  startTime: number;
+  jitter: number;
   routedPath: [number, number][] | null;
 }
 
 // Ring ping
 interface RingPing {
-  center:    [number, number];
+  center: [number, number];
   startTime: number;
   isOverrun: boolean;
 }
@@ -37,26 +178,35 @@ interface RingPing {
 // Minimal binary min-heap
 class MinHeap {
   private d: { id: number; f: number }[] = [];
-  get size() { return this.d.length; }
+  get size() {
+    return this.d.length;
+  }
   push(x: { id: number; f: number }) {
     this.d.push(x);
     let i = this.d.length - 1;
     while (i > 0) {
       const p = (i - 1) >> 1;
       if (this.d[p].f <= this.d[i].f) break;
-      [this.d[i], this.d[p]] = [this.d[p], this.d[i]]; i = p;
+      [this.d[i], this.d[p]] = [this.d[p], this.d[i]];
+      i = p;
     }
   }
   pop(): { id: number; f: number } | undefined {
-    const top = this.d[0]; const last = this.d.pop()!;
+    const top = this.d[0];
+    const last = this.d.pop()!;
     if (this.d.length) {
-      this.d[0] = last; let i = 0; const n = this.d.length;
+      this.d[0] = last;
+      let i = 0;
+      const n = this.d.length;
       while (true) {
-        let s = i; const l = 2*i+1, r = 2*i+2;
+        let s = i;
+        const l = 2 * i + 1,
+          r = 2 * i + 2;
         if (l < n && this.d[l].f < this.d[s].f) s = l;
         if (r < n && this.d[r].f < this.d[s].f) s = r;
         if (s === i) break;
-        [this.d[i], this.d[s]] = [this.d[s], this.d[i]]; i = s;
+        [this.d[i], this.d[s]] = [this.d[s], this.d[i]];
+        i = s;
       }
     }
     return top;
@@ -73,14 +223,14 @@ export class MapService {
 
   // Road routing
   private roadNodes: [number, number][] = [];
-  private roadAdj   = new Map<number, RoadEdge[]>();
-  private nodeGrid  = new Map<string, number[]>();
+  private roadAdj = new Map<number, RoadEdge[]>();
+  private nodeGrid = new Map<string, number[]>();
   private readonly GRID = 0.003;
 
   // Tracers
-  private tracers:        Tracer[]          = [];
+  private tracers: Tracer[] = [];
   private completedLines: GeoJSON.Feature[] = [];
-  private completedDirty  = false;
+  private completedDirty = false;
   private rafHandle = 0;
 
   // Ring pings
@@ -90,43 +240,47 @@ export class MapService {
   private frameCount = 0;
 
   // Building reveal
-  private buildingFeatures:  GeoJSON.Feature[] = [];
-  private buildingCellIndex  = new Map<string, number[]>();
+  private buildingFeatures: GeoJSON.Feature[] = [];
+  private buildingCellIndex = new Map<string, number[]>();
 
   // Layer insertion point
   private beforeRoadsId: string | undefined;
 
   // Markers
-  private pzMarker:   maplibregl.Marker | null = null;
+  private pzMarker: maplibregl.Marker | null = null;
   private userMarker: maplibregl.Marker | null = null;
+  private locationMarkers: maplibregl.Marker[] = [];
+  private currentCityId: string | null = null;
 
   // Event handlers
-  private clickHandler:  ((coord: [number,number]) => void) | null = null;
-  private hoverHandler:  ((props: Record<string,unknown>|null, xy:[number,number]|null) => void) | null = null;
+  private clickHandler: ((coord: [number, number]) => void) | null = null;
+  private hoverHandler:
+    | ((props: Record<string, unknown> | null, xy: [number, number] | null) => void)
+    | null = null;
   private boundMapClick: ((e: maplibregl.MapMouseEvent) => void) | null = null;
-  private boundMapMove:  ((e: maplibregl.MapMouseEvent) => void) | null = null;
+  private boundMapMove: ((e: maplibregl.MapMouseEvent) => void) | null = null;
   private boundMapLeave: (() => void) | null = null;
   private hoveredCellId: string | null = null;
 
   // Init
 
   init(containerId: string, center: [number, number] = [-74.006, 40.7128]): void {
-    const isMobile = window.innerWidth < 768 ||
-      /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isMobile =
+      window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
     this.map = new maplibregl.Map({
       container: containerId,
-      style: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${environment.mapTilerKey}`,
+      style: `https://api.maptiler.com/maps/dataviz-v4-dark/style.json?key=${environment.mapTilerKey}`,
       center,
-      zoom:             isMobile ? 11 : 12,
-      pitch:            isMobile ? 0  : 35,
-      bearing:          -10,
-      fadeDuration:     0,              // skip tile fade-in flash on load
-      renderWorldCopies: false,         // only render one world copy
-      maxTileCacheSize:  isMobile ? 20 : 60,
-      touchPitch:        false,         // two-finger pitch is jarring on mobile
-      dragRotate:        true,          // right-click drag rotates bearing
-      pixelRatio:        window.devicePixelRatio || 1,
+      zoom: isMobile ? 11 : 12,
+      pitch: isMobile ? 0 : 35,
+      bearing: -10,
+      fadeDuration: 0, // skip tile fade-in flash on load
+      renderWorldCopies: false, // only render one world copy
+      maxTileCacheSize: isMobile ? 20 : 60,
+      touchPitch: false, // two-finger pitch is jarring on mobile
+      dragRotate: true, // right-click drag rotates bearing
+      pixelRatio: window.devicePixelRatio || 1,
     });
 
     this.map.on('load', () => {
@@ -137,7 +291,11 @@ export class MapService {
       // Compass + pitch indicator — right-click drag to rotate, click to reset north
       if (!isMobile) {
         this.map.addControl(
-          new maplibregl.NavigationControl({ showZoom: false, showCompass: true, visualizePitch: true }),
+          new maplibregl.NavigationControl({
+            showZoom: false,
+            showCompass: true,
+            visualizePitch: true,
+          }),
           'bottom-right',
         );
       }
@@ -167,8 +325,8 @@ export class MapService {
 
   loadCityFeatures(
     buildings: GeoJSON.Feature[],
-    parks:     GeoJSON.Feature[],
-    water:     GeoJSON.Feature[],
+    parks: GeoJSON.Feature[],
+    water: GeoJSON.Feature[],
   ): void {
     if (!this.map || !this.isLoaded()) return;
 
@@ -177,24 +335,30 @@ export class MapService {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: water },
     });
-    this.map.addLayer({
-      id:     'city-water-fill',
-      type:   'fill',
-      source: 'city-water',
-      paint:  { 'fill-color': '#030810', 'fill-opacity': 0.92 },
-    }, this.beforeRoadsId);
+    this.map.addLayer(
+      {
+        id: 'city-water-fill',
+        type: 'fill',
+        source: 'city-water',
+        paint: { 'fill-color': '#030810', 'fill-opacity': 0.92 },
+      },
+      this.beforeRoadsId,
+    );
 
     // Parks (below hex, dead / scorched)
     this.map.addSource('city-parks', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: parks },
     });
-    this.map.addLayer({
-      id:     'city-parks-fill',
-      type:   'fill',
-      source: 'city-parks',
-      paint:  { 'fill-color': '#050a05', 'fill-opacity': 0.82 },
-    }, this.beforeRoadsId);
+    this.map.addLayer(
+      {
+        id: 'city-parks-fill',
+        type: 'fill',
+        source: 'city-parks',
+        paint: { 'fill-color': '#050a05', 'fill-opacity': 0.82 },
+      },
+      this.beforeRoadsId,
+    );
 
     // Buildings — 3-D reveal on infection
     // Keep original features as-is; revealStatus lives in feature state, not properties.
@@ -206,8 +370,12 @@ export class MapService {
     this.buildingFeatures.forEach((f, idx) => {
       const coords = (f.geometry as GeoJSON.Polygon).coordinates[0];
       if (!coords?.length) return;
-      let sumLng = 0, sumLat = 0;
-      coords.forEach(([lng, lat]) => { sumLng += lng; sumLat += lat; });
+      let sumLng = 0,
+        sumLat = 0;
+      coords.forEach(([lng, lat]) => {
+        sumLng += lng;
+        sumLat += lat;
+      });
       const avgLng = sumLng / coords.length;
       const avgLat = sumLat / coords.length;
       const cellId = h3.latLngToCell(avgLat, avgLng, BUILDING_RES);
@@ -222,38 +390,47 @@ export class MapService {
     });
 
     this.map.addLayer({
-      id:     'buildings-reveal',
-      type:   'fill-extrusion',
+      id: 'buildings-reveal',
+      type: 'fill-extrusion',
       source: 'city-buildings',
-      paint:  {
+      paint: {
         'fill-extrusion-color': [
-          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
-          'overrun',  '#8800cc',
-          'infected', '#cc0020',
+          'match',
+          ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
+          'overrun',
+          '#8800cc',
+          'infected',
+          '#cc0020',
           '#0a0010',
         ],
         'fill-extrusion-height': [
-          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
-          'overrun',  90,
-          'infected', 45,
+          'match',
+          ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
+          'overrun',
+          90,
+          'infected',
+          45,
           3,
         ],
-        'fill-extrusion-base':    0,
+        'fill-extrusion-base': 0,
         'fill-extrusion-opacity': [
-          'match', ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
-          'overrun',  0.95,
-          'infected', 0.80,
+          'match',
+          ['coalesce', ['feature-state', 'revealStatus'], 'clean'],
+          'overrun',
+          0.95,
+          'infected',
+          0.8,
           0.12,
         ],
-        'fill-extrusion-color-transition':   { duration: 900, delay: 0 },
-        'fill-extrusion-height-transition':  { duration: 1100, delay: 0 },
+        'fill-extrusion-color-transition': { duration: 900, delay: 0 },
+        'fill-extrusion-height-transition': { duration: 1100, delay: 0 },
         'fill-extrusion-opacity-transition': { duration: 900, delay: 0 },
       },
     });
 
     console.log(
       `City features loaded — buildings: ${buildings.length}, ` +
-      `parks: ${parks.length}, water: ${water.length}`,
+        `parks: ${parks.length}, water: ${water.length}`,
     );
   }
 
@@ -262,9 +439,9 @@ export class MapService {
   focusOnPatientZero(center: [number, number]): void {
     this.map.flyTo({
       center,
-      zoom:     16,
-      pitch:    65,
-      bearing:  -20,
+      zoom: 16,
+      pitch: 65,
+      bearing: -20,
       duration: 3000,
       essential: true,
     });
@@ -276,6 +453,7 @@ export class MapService {
     if (preInfected.length === 0) return;
     preInfected.forEach((c) => this.hexFeatures.set(c.cellId, cellToPolygon(c)));
     this.flushHex();
+    this.updateVisibleLocationMarkers();
   }
 
   updateHexLayer(dirtyCells: SimCell[]): void {
@@ -283,7 +461,10 @@ export class MapService {
     if (dirtyCells.length === 0) return;
 
     dirtyCells.forEach((cell) => {
-      if (cell.status === 'clean') { this.hexFeatures.delete(cell.cellId); return; }
+      if (cell.status === 'clean') {
+        this.hexFeatures.delete(cell.cellId);
+        return;
+      }
       this.hexFeatures.set(cell.cellId, cellToPolygon(cell));
     });
     this.flushHex();
@@ -295,21 +476,20 @@ export class MapService {
         const indices = this.buildingCellIndex.get(cell.cellId);
         if (!indices) return;
         const next =
-          cell.status === 'overrun'  ? 'overrun'  :
-          cell.status === 'infected' ? 'infected' : 'clean';
+          cell.status === 'overrun' ? 'overrun' : cell.status === 'infected' ? 'infected' : 'clean';
         indices.forEach((idx) => {
-          this.map.setFeatureState(
-            { source: 'city-buildings', id: idx },
-            { revealStatus: next },
-          );
+          this.map.setFeatureState({ source: 'city-buildings', id: idx }, { revealStatus: next });
         });
       });
     }
+    this.updateVisibleLocationMarkers();
   }
 
   private flushHex(): void {
-    (this.map.getSource('hex-grid') as GeoJSONSource | undefined)
-      ?.setData({ type: 'FeatureCollection', features: [...this.hexFeatures.values()] });
+    (this.map.getSource('hex-grid') as GeoJSONSource | undefined)?.setData({
+      type: 'FeatureCollection',
+      features: [...this.hexFeatures.values()],
+    });
   }
 
   spawnTracers(events: SpreadEvent[]): void {
@@ -317,15 +497,15 @@ export class MapService {
     // Cap per-tick spawns — at high infection rates hundreds of events fire per tick
     // and each becomes a LineString uploaded every frame
     const batch = events.length > 12 ? events.slice(0, 12) : events;
-    const now   = performance.now();
+    const now = performance.now();
     for (const e of batch) {
-      const dx  = e.toCenter[0] - e.fromCenter[0];
-      const dy  = e.toCenter[1] - e.fromCenter[1];
-      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const dx = e.toCenter[0] - e.fromCenter[0];
+      const dy = e.toCenter[1] - e.fromCenter[1];
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
       const jitter = (Math.random() - 0.5) * 0.00012 * (len / 0.002);
       this.tracers.push({
         from: e.fromCenter,
-        to:   e.toCenter,
+        to: e.toCenter,
         startTime: now,
         jitter,
         routedPath: this.routeAlongRoads(e.fromCenter, e.toCenter),
@@ -339,8 +519,8 @@ export class MapService {
     // Spawn a ping at the source of each spread event (origin flash)
     const batch = events.slice(0, MAX_RINGS_PER_TICK);
     batch.forEach((e) => {
-      this.ringPings.push({ center: e.fromCenter, startTime: now,        isOverrun });
-      this.ringPings.push({ center: e.toCenter,   startTime: now + 180,  isOverrun });
+      this.ringPings.push({ center: e.fromCenter, startTime: now, isOverrun });
+      this.ringPings.push({ center: e.toCenter, startTime: now + 180, isOverrun });
     });
   }
 
@@ -348,24 +528,32 @@ export class MapService {
     const active = cells.filter((c) => c.status === 'infected' || c.status === 'overrun');
     if (active.length < 4) return;
 
-    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity,
+      maxLng = -Infinity,
+      minLat = Infinity,
+      maxLat = -Infinity;
     active.forEach(({ center: [lng, lat] }) => {
-      if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
-      if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
     });
 
-    const lp  = Math.max((maxLng - minLng) * 0.15, 0.005);
+    const lp = Math.max((maxLng - minLng) * 0.15, 0.005);
     const ltp = Math.max((maxLat - minLat) * 0.15, 0.005);
 
     this.map.fitBounds(
-      [[minLng - lp, minLat - ltp], [maxLng + lp, maxLat + ltp]],
+      [
+        [minLng - lp, minLat - ltp],
+        [maxLng + lp, maxLat + ltp],
+      ],
       {
         duration: 3500,
-        pitch:    50,
-        bearing:  -15,
-        maxZoom:  15,
-        minZoom:  12,
-        padding:  { top: 80, bottom: 80, left: 80, right: 80 },
+        pitch: 50,
+        bearing: -15,
+        maxZoom: 15,
+        minZoom: 12,
+        padding: { top: 80, bottom: 80, left: 80, right: 80 },
       },
     );
   }
@@ -381,40 +569,48 @@ export class MapService {
       data: { type: 'FeatureCollection', features: [] },
     });
 
-    this.map.addLayer({
-      id:     'hex-fill',
-      type:   'fill',
-      source: 'hex-grid',
-      paint:  {
-        'fill-color': [
-          'interpolate', ['linear'], ['get', 'zombieRatio'],
-          0.0, '#cc0020',
-          0.35, '#8a0060',
-          0.7,  '#4a0080',
-          1.0,  '#2a0040',
-        ],
-        'fill-opacity': [
-          'interpolate', ['linear'], ['get', 'zombieRatio'],
-          0.0, 0.55,
-          1.0, 0.75,
-        ],
-        'fill-opacity-transition': { duration: 700 },
-        'fill-color-transition':   { duration: 700 },
+    this.map.addLayer(
+      {
+        id: 'hex-fill',
+        type: 'fill',
+        source: 'hex-grid',
+        paint: {
+          'fill-color': [
+            'interpolate',
+            ['linear'],
+            ['get', 'zombieRatio'],
+            0.0,
+            '#cc0020',
+            0.35,
+            '#8a0060',
+            0.7,
+            '#4a0080',
+            1.0,
+            '#2a0040',
+          ],
+          'fill-opacity': ['interpolate', ['linear'], ['get', 'zombieRatio'], 0.0, 0.55, 1.0, 0.75],
+          'fill-opacity-transition': { duration: 700 },
+          'fill-color-transition': { duration: 700 },
+        },
       },
-    }, beforeRoads);
+      beforeRoads,
+    );
 
-    this.map.addLayer({
-      id:     'hex-frontier',
-      type:   'line',
-      source: 'hex-grid',
-      filter: ['==', ['get', 'status'], 'infected'],
-      paint:  {
-        'line-color':   '#ff003c',
-        'line-width':   1.5,
-        'line-blur':    2,
-        'line-opacity': 0.85,
+    this.map.addLayer(
+      {
+        id: 'hex-frontier',
+        type: 'line',
+        source: 'hex-grid',
+        filter: ['==', ['get', 'status'], 'infected'],
+        paint: {
+          'line-color': '#ff003c',
+          'line-width': 1.5,
+          'line-blur': 2,
+          'line-opacity': 0.85,
+        },
       },
-    }, beforeRoads);
+      beforeRoads,
+    );
 
     // 2. Permanent spread-line network
     this.map.addSource('spread-lines', {
@@ -424,38 +620,50 @@ export class MapService {
     });
 
     this.map.addLayer({
-      id:     'spread-glow',
-      type:   'line',
+      id: 'spread-glow',
+      type: 'line',
       source: 'spread-lines',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint:  {
+      paint: {
         'line-gradient': [
-          'interpolate', ['linear'], ['line-progress'],
-          0,    'rgba(220,0,40,0)',
-          0.08, 'rgba(220,0,40,0.4)',
-          0.7,  'rgba(150,20,220,0.5)',
-          1,    'rgba(100,10,180,0.45)',
+          'interpolate',
+          ['linear'],
+          ['line-progress'],
+          0,
+          'rgba(220,0,40,0)',
+          0.08,
+          'rgba(220,0,40,0.4)',
+          0.7,
+          'rgba(150,20,220,0.5)',
+          1,
+          'rgba(100,10,180,0.45)',
         ],
         'line-width': 7,
-        'line-blur':  3.5,
+        'line-blur': 3.5,
       },
     });
 
     this.map.addLayer({
-      id:     'spread-core',
-      type:   'line',
+      id: 'spread-core',
+      type: 'line',
       source: 'spread-lines',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint:  {
+      paint: {
         'line-gradient': [
-          'interpolate', ['linear'], ['line-progress'],
-          0,    'rgba(255,0,60,0)',
-          0.07, 'rgba(255,0,60,0.9)',
-          0.65, 'rgba(160,30,240,0.9)',
-          1,    'rgba(110,10,190,0.7)',
+          'interpolate',
+          ['linear'],
+          ['line-progress'],
+          0,
+          'rgba(255,0,60,0)',
+          0.07,
+          'rgba(255,0,60,0.9)',
+          0.65,
+          'rgba(160,30,240,0.9)',
+          1,
+          'rgba(110,10,190,0.7)',
         ],
         'line-width': 1.8,
-        'line-blur':  0.3,
+        'line-blur': 0.3,
       },
     });
 
@@ -467,37 +675,47 @@ export class MapService {
     });
 
     this.map.addLayer({
-      id:     'tracer-tail-glow',
-      type:   'line',
+      id: 'tracer-tail-glow',
+      type: 'line',
       source: 'tracer-tails',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint:  {
+      paint: {
         'line-gradient': [
-          'interpolate', ['linear'], ['line-progress'],
-          0,   'rgba(255,0,60,0)',
-          0.2, 'rgba(255,0,60,0.65)',
-          1,   'rgba(180,40,255,0.9)',
+          'interpolate',
+          ['linear'],
+          ['line-progress'],
+          0,
+          'rgba(255,0,60,0)',
+          0.2,
+          'rgba(255,0,60,0.65)',
+          1,
+          'rgba(180,40,255,0.9)',
         ],
-        'line-width':   10,
-        'line-blur':    3,
+        'line-width': 10,
+        'line-blur': 3,
         'line-opacity': 0.5,
       },
     });
 
     this.map.addLayer({
-      id:     'tracer-tail-core',
-      type:   'line',
+      id: 'tracer-tail-core',
+      type: 'line',
       source: 'tracer-tails',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint:  {
+      paint: {
         'line-gradient': [
-          'interpolate', ['linear'], ['line-progress'],
-          0,    'rgba(255,0,60,0)',
-          0.1,  'rgba(255,20,60,1)',
-          1,    'rgba(195,55,255,1)',
+          'interpolate',
+          ['linear'],
+          ['line-progress'],
+          0,
+          'rgba(255,0,60,0)',
+          0.1,
+          'rgba(255,20,60,1)',
+          1,
+          'rgba(195,55,255,1)',
         ],
         'line-width': 2.5,
-        'line-blur':  0.2,
+        'line-blur': 0.2,
       },
     });
 
@@ -507,25 +725,25 @@ export class MapService {
     });
 
     this.map.addLayer({
-      id:     'tracer-head-glow',
-      type:   'circle',
+      id: 'tracer-head-glow',
+      type: 'circle',
       source: 'tracers',
-      paint:  {
-        'circle-radius':  ['*', ['get', 'radius'], 3.2],
-        'circle-color':   ['get', 'color'],
-        'circle-blur':    1.2,
+      paint: {
+        'circle-radius': ['*', ['get', 'radius'], 3.2],
+        'circle-color': ['get', 'color'],
+        'circle-blur': 1.2,
         'circle-opacity': ['*', ['get', 'opacity'], 0.32],
       },
     });
 
     this.map.addLayer({
-      id:     'tracer-head-core',
-      type:   'circle',
+      id: 'tracer-head-core',
+      type: 'circle',
       source: 'tracers',
-      paint:  {
-        'circle-radius':  ['get', 'radius'],
-        'circle-color':   ['get', 'color'],
-        'circle-blur':    0.15,
+      paint: {
+        'circle-radius': ['get', 'radius'],
+        'circle-color': ['get', 'color'],
+        'circle-blur': 0.15,
         'circle-opacity': ['get', 'opacity'],
       },
     });
@@ -538,13 +756,13 @@ export class MapService {
 
     // Outer bloom
     this.map.addLayer({
-      id:     'ring-bloom',
-      type:   'circle',
+      id: 'ring-bloom',
+      type: 'circle',
       source: 'ring-pings',
-      paint:  {
-        'circle-radius':  ['get', 'r'],
-        'circle-color':   ['get', 'c'],
-        'circle-blur':    1.6,
+      paint: {
+        'circle-radius': ['get', 'r'],
+        'circle-color': ['get', 'c'],
+        'circle-blur': 1.6,
         'circle-opacity': ['get', 'bo'],
         'circle-stroke-width': 0,
       },
@@ -552,15 +770,15 @@ export class MapService {
 
     // Sharp expanding ring edge
     this.map.addLayer({
-      id:     'ring-edge',
-      type:   'circle',
+      id: 'ring-edge',
+      type: 'circle',
       source: 'ring-pings',
-      paint:  {
-        'circle-radius':         ['get', 'r'],
-        'circle-color':          'rgba(0,0,0,0)',
-        'circle-opacity':        0,
-        'circle-stroke-width':   1.5,
-        'circle-stroke-color':   ['get', 'c'],
+      paint: {
+        'circle-radius': ['get', 'r'],
+        'circle-color': 'rgba(0,0,0,0)',
+        'circle-opacity': 0,
+        'circle-stroke-width': 1.5,
+        'circle-stroke-color': ['get', 'c'],
         'circle-stroke-opacity': ['get', 'o'],
       },
     });
@@ -568,46 +786,52 @@ export class MapService {
 
   // Road routing (A*)
 
-  private routeAlongRoads(from: [number,number], to: [number,number]): [number,number][] | null {
+  private routeAlongRoads(from: [number, number], to: [number, number]): [number, number][] | null {
     if (this.roadNodes.length === 0) return null;
-    if (haversineM(from[0],from[1],to[0],to[1]) > MAX_ROUTE_M) return null;
+    if (haversineM(from[0], from[1], to[0], to[1]) > MAX_ROUTE_M) return null;
 
     const fn = this.nearestNode(from);
     const tn = this.nearestNode(to);
     if (fn === -1 || tn === -1 || fn === tn) return null;
 
     const [fnlng, fnlat] = this.roadNodes[fn];
-    if (haversineM(from[0],from[1],fnlng,fnlat) > 450) return null;
+    if (haversineM(from[0], from[1], fnlng, fnlat) > 450) return null;
 
     const path = this.astar(fn, tn);
     if (!path || path.length < 2) return null;
 
-    const straight = haversineM(from[0],from[1],to[0],to[1]);
+    const straight = haversineM(from[0], from[1], to[0], to[1]);
     if (pathLen(path) > straight * 4) return null;
 
     return path;
   }
 
-  private nearestNode([lng,lat]: [number,number]): number {
-    const cx = Math.floor(lng/this.GRID), cy = Math.floor(lat/this.GRID);
-    let best = -1, bestD = Infinity;
-    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
-      for (const id of this.nodeGrid.get(`${cx+dx},${cy+dy}`) ?? []) {
-        const [nx,ny] = this.roadNodes[id];
-        const d = (nx-lng)**2+(ny-lat)**2;
-        if (d < bestD) { bestD = d; best = id; }
+  private nearestNode([lng, lat]: [number, number]): number {
+    const cx = Math.floor(lng / this.GRID),
+      cy = Math.floor(lat / this.GRID);
+    let best = -1,
+      bestD = Infinity;
+    for (let dx = -2; dx <= 2; dx++)
+      for (let dy = -2; dy <= 2; dy++) {
+        for (const id of this.nodeGrid.get(`${cx + dx},${cy + dy}`) ?? []) {
+          const [nx, ny] = this.roadNodes[id];
+          const d = (nx - lng) ** 2 + (ny - lat) ** 2;
+          if (d < bestD) {
+            bestD = d;
+            best = id;
+          }
+        }
       }
-    }
     return best;
   }
 
-  private astar(fn: number, tn: number): [number,number][] | null {
-    const [tlng,tlat] = this.roadNodes[tn];
-    const g    = new Map<number,number>([[fn,0]]);
-    const prev = new Map<number,{node:number; coords:[number,number][]}>();
+  private astar(fn: number, tn: number): [number, number][] | null {
+    const [tlng, tlat] = this.roadNodes[tn];
+    const g = new Map<number, number>([[fn, 0]]);
+    const prev = new Map<number, { node: number; coords: [number, number][] }>();
     const heap = new MinHeap();
-    const vis  = new Set<number>();
-    heap.push({ id: fn, f: haversineM(this.roadNodes[fn][0],this.roadNodes[fn][1],tlng,tlat) });
+    const vis = new Set<number>();
+    heap.push({ id: fn, f: haversineM(this.roadNodes[fn][0], this.roadNodes[fn][1], tlng, tlat) });
 
     while (heap.size > 0) {
       const { id: cur } = heap.pop()!;
@@ -620,16 +844,23 @@ export class MapService {
         if (ng < (g.get(e.to) ?? Infinity)) {
           g.set(e.to, ng);
           prev.set(e.to, { node: cur, coords: e.coords });
-          heap.push({ id: e.to, f: ng + haversineM(this.roadNodes[e.to][0],this.roadNodes[e.to][1],tlng,tlat) });
+          heap.push({
+            id: e.to,
+            f: ng + haversineM(this.roadNodes[e.to][0], this.roadNodes[e.to][1], tlng, tlat),
+          });
         }
       }
     }
 
     if (!prev.has(tn)) return null;
-    const segs: [number,number][][] = [];
+    const segs: [number, number][][] = [];
     let cur = tn;
-    while (cur !== fn) { const p = prev.get(cur)!; segs.unshift(p.coords); cur = p.node; }
-    const path: [number,number][] = [...segs[0]];
+    while (cur !== fn) {
+      const p = prev.get(cur)!;
+      segs.unshift(p.coords);
+      cur = p.node;
+    }
+    const path: [number, number][] = [...segs[0]];
     for (let i = 1; i < segs.length; i++) path.push(...segs[i].slice(1));
     return path;
   }
@@ -637,17 +868,20 @@ export class MapService {
   // RAF animation loop
 
   private startAnimationLoop(): void {
-    const loop = () => { this.tickAnimation(); this.rafHandle = requestAnimationFrame(loop); };
+    const loop = () => {
+      this.tickAnimation();
+      this.rafHandle = requestAnimationFrame(loop);
+    };
     this.rafHandle = requestAnimationFrame(loop);
   }
 
   private tickAnimation(): void {
     this.frameCount++;
-    const now    = performance.now();
+    const now = performance.now();
     const moving = this.map.isMoving();
 
     // Process tracers — advance every frame so animation stays smooth
-    const stillActive: Tracer[]           = [];
+    const stillActive: Tracer[] = [];
     const headFeatures: GeoJSON.Feature[] = [];
     const tailFeatures: GeoJSON.Feature[] = [];
     const hadTracers = this.tracers.length > 0;
@@ -663,7 +897,7 @@ export class MapService {
           this.completedLines.shift(); // remove oldest
         }
         this.completedLines.push({
-          type:     'Feature' as const,
+          type: 'Feature' as const,
           geometry: { type: 'LineString' as const, coordinates: arc },
           properties: {},
         });
@@ -673,18 +907,18 @@ export class MapService {
 
       stillActive.push(t);
       const [lng, lat] = arc[arc.length - 1];
-      const eased  = 1 - Math.pow(1 - raw, 3);
+      const eased = 1 - Math.pow(1 - raw, 3);
       const opacity = raw < 0.1 ? raw / 0.1 : 1;
-      const radius  = 4 + 3 * Math.sin(raw * Math.PI);
-      const color   = lerpColor('#ff003c', '#b026ff', eased);
+      const radius = 4 + 3 * Math.sin(raw * Math.PI);
+      const color = lerpColor('#ff003c', '#b026ff', eased);
 
       headFeatures.push({
-        type:     'Feature' as const,
+        type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [lng, lat] },
         properties: { opacity, radius, color },
       });
       tailFeatures.push({
-        type:     'Feature' as const,
+        type: 'Feature' as const,
         geometry: { type: 'LineString' as const, coordinates: arc },
         properties: {},
       });
@@ -694,8 +928,10 @@ export class MapService {
 
     // Always upload tracer HEADS (tiny point source — cheap)
     if (hadTracers || stillActive.length > 0) {
-      (this.map.getSource('tracers') as GeoJSONSource|undefined)
-        ?.setData({ type: 'FeatureCollection', features: headFeatures });
+      (this.map.getSource('tracers') as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features: headFeatures,
+      });
     }
 
     // During camera movement skip the heavy uploads (tails are large LineStrings,
@@ -703,22 +939,28 @@ export class MapService {
     if (moving) {
       // Still clear tails so they don't ghost after pan ends
       if (hadTracers && stillActive.length === 0) {
-        (this.map.getSource('tracer-tails') as GeoJSONSource|undefined)
-          ?.setData({ type: 'FeatureCollection', features: [] });
+        (this.map.getSource('tracer-tails') as GeoJSONSource | undefined)?.setData({
+          type: 'FeatureCollection',
+          features: [],
+        });
       }
       return;
     }
 
     // Tracer tails — thick blurry lines; every-other-frame is imperceptible at 60fps
     if ((hadTracers || stillActive.length > 0) && this.frameCount % 2 === 0) {
-      (this.map.getSource('tracer-tails') as GeoJSONSource|undefined)
-        ?.setData({ type: 'FeatureCollection', features: tailFeatures });
+      (this.map.getSource('tracer-tails') as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features: tailFeatures,
+      });
     }
 
     // Spread-line history — throttle to every 5 frames; it's static between ticks
     if (this.completedDirty && this.frameCount % 5 === 0) {
-      (this.map.getSource('spread-lines') as GeoJSONSource|undefined)
-        ?.setData({ type: 'FeatureCollection', features: this.completedLines });
+      (this.map.getSource('spread-lines') as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features: this.completedLines,
+      });
       this.completedDirty = false;
     }
 
@@ -732,7 +974,7 @@ export class MapService {
     // Ring pings
     if (this.ringPings.length === 0) return;
 
-    const liveRings: RingPing[]           = [];
+    const liveRings: RingPing[] = [];
     const ringFeatures: GeoJSON.Feature[] = [];
 
     for (const ring of this.ringPings) {
@@ -741,17 +983,17 @@ export class MapService {
       liveRings.push(ring);
 
       const eased = 1 - Math.pow(1 - progress, 2.2);
-      const r     = 5 + 62 * eased;
-      const o     = Math.max(0, 1 - progress * 1.15);
+      const r = 5 + 62 * eased;
+      const o = Math.max(0, 1 - progress * 1.15);
       const color = ring.isOverrun ? '#b026ff' : '#ff003c';
 
       ringFeatures.push({
-        type:     'Feature' as const,
+        type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: ring.center },
         properties: { r: r * 1.9, o: 0, bo: o * 0.18, c: color },
       });
       ringFeatures.push({
-        type:     'Feature' as const,
+        type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: ring.center },
         properties: { r, o, bo: 0, c: color },
       });
@@ -760,8 +1002,10 @@ export class MapService {
     this.ringPings = liveRings;
     // Ring pings expand over ~1.4 s — 30fps upload is visually indistinguishable from 60fps
     if (this.frameCount % 2 === 0) {
-      (this.map.getSource('ring-pings') as GeoJSONSource|undefined)
-        ?.setData({ type: 'FeatureCollection', features: ringFeatures });
+      (this.map.getSource('ring-pings') as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features: ringFeatures,
+      });
     }
   }
 
@@ -769,7 +1013,13 @@ export class MapService {
 
   private findRoadLayer(): string | undefined {
     const ROAD_SOURCE_LAYERS = new Set([
-      'transportation', 'road', 'roads', 'highway', 'transport', 'street', 'streets',
+      'transportation',
+      'road',
+      'roads',
+      'highway',
+      'transport',
+      'street',
+      'streets',
     ]);
     return this.map.getStyle()?.layers?.find((l) => {
       const sl = (l as { 'source-layer'?: string })['source-layer'];
@@ -777,7 +1027,9 @@ export class MapService {
     })?.id;
   }
 
-  getMap(): MapLibreMap { return this.map; }
+  getMap(): MapLibreMap {
+    return this.map;
+  }
 
   // Map click / hover wiring
 
@@ -791,22 +1043,31 @@ export class MapService {
   }
 
   removeClickHandler(): void {
-    if (this.boundMapClick) { this.map?.off('click', this.boundMapClick); this.boundMapClick = null; }
+    if (this.boundMapClick) {
+      this.map?.off('click', this.boundMapClick);
+      this.boundMapClick = null;
+    }
     this.clickHandler = null;
     if (this.map) this.map.getCanvas().style.cursor = '';
   }
 
-  onCellHover(cb: (props: Record<string,unknown>|null, xy:[number,number]|null) => void): void {
+  onCellHover(
+    cb: (props: Record<string, unknown> | null, xy: [number, number] | null) => void,
+  ): void {
     this.hoverHandler = cb;
 
     this.boundMapMove = (e: maplibregl.MapMouseEvent) => {
       const features = this.map.queryRenderedFeatures(e.point, { layers: ['hex-fill'] });
       if (features.length > 0) {
-        const props = features[0].properties as Record<string,unknown>;
+        const props = features[0].properties as Record<string, unknown>;
         // Highlight on hover
         const cellId = props['cellId'] as string;
         if (cellId !== this.hoveredCellId) {
-          if (this.hoveredCellId) this.map.setFeatureState({ source:'hex-grid', id: this.hoveredCellId }, { hover: false });
+          if (this.hoveredCellId)
+            this.map.setFeatureState(
+              { source: 'hex-grid', id: this.hoveredCellId },
+              { hover: false },
+            );
           this.hoveredCellId = cellId;
         }
         this.hoverHandler?.(props, [e.point.x, e.point.y]);
@@ -829,8 +1090,14 @@ export class MapService {
   }
 
   removeHoverHandler(): void {
-    if (this.boundMapMove)  { this.map?.off('mousemove',  this.boundMapMove);  this.boundMapMove = null; }
-    if (this.boundMapLeave) { this.map?.off('mouseleave', this.boundMapLeave as () => void); this.boundMapLeave = null; }
+    if (this.boundMapMove) {
+      this.map?.off('mousemove', this.boundMapMove);
+      this.boundMapMove = null;
+    }
+    if (this.boundMapLeave) {
+      this.map?.off('mouseleave', this.boundMapLeave as () => void);
+      this.boundMapLeave = null;
+    }
     this.hoverHandler = null;
   }
 
@@ -862,24 +1129,134 @@ export class MapService {
   }
 
   clearMarkers(): void {
-    this.pzMarker?.remove();   this.pzMarker = null;
-    this.userMarker?.remove(); this.userMarker = null;
+    this.pzMarker?.remove();
+    this.pzMarker = null;
+    this.userMarker?.remove();
+    this.userMarker = null;
+    this.clearLocationMarkers();
+  }
+
+  addLocationMarkers(cityId: string): void {
+    this.currentCityId = cityId;
+    this.clearLocationMarkers();
+    // Initially render markers if the simulation is already running/infected
+    this.updateVisibleLocationMarkers();
+  }
+
+  /**
+   * Scans all landmark coordinate definitions for the active city.
+   * Spawns markers natively only when infection maps to their corresponding H3 index.
+   */
+  private updateVisibleLocationMarkers(): void {
+    if (!this.map || !this.currentCityId) return;
+    const defs = LOCATION_MARKERS[this.currentCityId] ?? [];
+
+    // Derive simulation grid resolution dynamically from active infected hex cells
+    let res = 8;
+    if (this.hexFeatures.size > 0) {
+      const firstKey = this.hexFeatures.keys().next().value;
+      if (firstKey) {
+        try {
+          res = h3.getResolution(firstKey);
+        } catch (e) {
+          res = 8;
+        }
+      }
+    }
+
+    for (const def of defs) {
+      // Map landmark coordinates to its target simulation H3 hex cell
+      const cellId = h3.latLngToCell(def.coords[1], def.coords[0], res);
+      const isRevealed = this.hexFeatures.has(cellId);
+      const existingMarkerIndex = this.locationMarkers.findIndex(
+        (m) => (m as any)._locationMarkerId === def.id,
+      );
+
+      // Condition A: Infected area reached landmark, but marker isn't on map yet
+      if (isRevealed && existingMarkerIndex === -1) {
+        this.createLocationMarker(def);
+      }
+      // Condition B: Area clean, but marker exists on map (handles timeline resets)
+      else if (!isRevealed && existingMarkerIndex !== -1) {
+        const marker = this.locationMarkers[existingMarkerIndex];
+        if (marker.getPopup()?.isOpen()) {
+          marker.getPopup().remove();
+        }
+        marker.remove();
+        this.locationMarkers.splice(existingMarkerIndex, 1);
+      }
+    }
+  }
+
+  /**
+   * Instantiates a custom marker and chains a native caret-anchored popup component.
+   */
+  private createLocationMarker(def: LocationMarkerDef): void {
+    // MapLibre native anchored context balloon
+    const popup = new maplibregl.Popup({
+      closeButton: true,
+      closeOnClick: true,
+      className: 'cam-popup-tooltip',
+      maxWidth: '240px',
+      offset: [0, -10],
+      anchor: 'bottom',
+    });
+
+    popup.setHTML(`
+      <div class="cam-popup-body">
+        <div class="cam-tt-video-wrap">
+          <video class="cam-tt-video" src="${def.videoSrc}" loop muted playsinline autoplay></video>
+          <div class="cam-tt-scanlines"></div>
+        </div>
+      </div>
+    `);
+
+    // Ensure the feed safely streams when the viewport window is initialized
+    popup.on('open', () => {
+      const video = popup.getElement()?.querySelector<HTMLVideoElement>('.cam-tt-video');
+      if (video) {
+        video.play().catch(() => {});
+      }
+    });
+
+    const marker = new maplibregl.Marker({ anchor: 'top' })
+      .setLngLat(def.coords)
+      .setPopup(popup) // Natively attaches click event & caretaker anchoring behavior
+      .addTo(this.map);
+
+    // Metadata injection for clean array mapping
+    (marker as any)._locationMarkerId = def.id;
+    this.locationMarkers.push(marker);
+  }
+
+  clearLocationMarkers(): void {
+    for (const m of this.locationMarkers) {
+      if (m.getPopup()?.isOpen()) {
+        m.getPopup().remove();
+      }
+      m.remove();
+    }
+    this.locationMarkers = [];
   }
 
   resetSimLayers(): void {
     const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
     this.hexFeatures.clear();
-    this.tracers = []; this.completedLines = []; this.completedDirty = false;
+    this.tracers = [];
+    this.completedLines = [];
+    this.completedDirty = false;
     this.ringPings = [];
-    (['hex-grid', 'spread-lines', 'tracer-tails', 'tracers', 'ring-pings'] as const)
-      .forEach((id) => (this.map.getSource(id) as GeoJSONSource | undefined)?.setData(empty));
+    (['hex-grid', 'spread-lines', 'tracer-tails', 'tracers', 'ring-pings'] as const).forEach((id) =>
+      (this.map.getSource(id) as GeoJSONSource | undefined)?.setData(empty),
+    );
     // Reset all building feature states in one call — clears every revealStatus
     if (this.buildingFeatures.length > 0) {
       this.map.removeFeatureState({ source: 'city-buildings' });
     }
+    this.updateVisibleLocationMarkers();
   }
 
-  flyTo(center: [number,number], zoom: number): void {
+  flyTo(center: [number, number], zoom: number): void {
     this.map.flyTo({ center, zoom, pitch: 45, duration: 1800 });
   }
 
@@ -887,13 +1264,21 @@ export class MapService {
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     this.rafHandle = 0;
     this.hexFeatures.clear();
-    this.tracers = []; this.completedLines = []; this.completedDirty = false;
-    this.roadNodes = []; this.roadAdj.clear(); this.nodeGrid.clear();
+    this.tracers = [];
+    this.completedLines = [];
+    this.completedDirty = false;
+    this.roadNodes = [];
+    this.roadAdj.clear();
+    this.nodeGrid.clear();
     this.ringPings = [];
-    this.buildingFeatures = []; this.buildingCellIndex.clear();
+    this.buildingFeatures = [];
+    this.buildingCellIndex.clear();
     this.beforeRoadsId = undefined;
-    this.pzMarker?.remove();   this.pzMarker = null;
-    this.userMarker?.remove(); this.userMarker = null;
+    this.pzMarker?.remove();
+    this.pzMarker = null;
+    this.userMarker?.remove();
+    this.userMarker = null;
+    this.clearLocationMarkers();
     this.removeClickHandler();
     this.removeHoverHandler();
     this.map?.remove();
@@ -909,20 +1294,19 @@ function cellToPolygon(cell: SimCell): GeoJSON.Feature {
     type: 'Feature',
     geometry: {
       type: 'Polygon',
-      coordinates: [[
-        ...boundary.map(([lat, lng]) => [lng, lat]),
-        [boundary[0][1], boundary[0][0]],
-      ]],
+      coordinates: [
+        [...boundary.map(([lat, lng]) => [lng, lat]), [boundary[0][1], boundary[0][0]]],
+      ],
     },
     properties: {
-      cellId:      cell.cellId,
-      status:      cell.status,
+      cellId: cell.cellId,
+      status: cell.status,
       zombieRatio: cell.population > 0 ? cell.zombie / cell.population : 0,
     },
   };
 }
 
-function buildArc(t: Tracer, progress: number): [number,number][] {
+function buildArc(t: Tracer, progress: number): [number, number][] {
   if (t.routedPath && t.routedPath.length >= 2) {
     const total = pathLen(t.routedPath);
     if (total > 0) {
@@ -932,54 +1316,67 @@ function buildArc(t: Tracer, progress: number): [number,number][] {
     }
   }
   // Bezier fallback.
-  const dx = t.to[0]-t.from[0], dy = t.to[1]-t.from[1];
-  const out: [number,number][] = [];
+  const dx = t.to[0] - t.from[0],
+    dy = t.to[1] - t.from[1];
+  const out: [number, number][] = [];
   for (let i = 0; i <= 12; i++) {
-    const s = (i/12)*progress, se = 1-Math.pow(1-s,3), sb = 4*s*(1-s);
-    out.push([t.from[0]+dx*se+(-dy)*t.jitter*sb, t.from[1]+dy*se+(dx)*t.jitter*sb]);
+    const s = (i / 12) * progress,
+      se = 1 - Math.pow(1 - s, 3),
+      sb = 4 * s * (1 - s);
+    out.push([t.from[0] + dx * se + -dy * t.jitter * sb, t.from[1] + dy * se + dx * t.jitter * sb]);
   }
   return out;
 }
 
-function samplePath(path: [number,number][], dist: number): [number,number][] {
-  const out: [number,number][] = [path[0]];
+function samplePath(path: [number, number][], dist: number): [number, number][] {
+  const out: [number, number][] = [path[0]];
   let acc = 0;
   for (let i = 1; i < path.length; i++) {
-    const seg = haversineM(path[i-1][0],path[i-1][1],path[i][0],path[i][1]);
+    const seg = haversineM(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
     if (acc + seg >= dist) {
-      const t = (dist-acc)/seg;
-      out.push([path[i-1][0]+(path[i][0]-path[i-1][0])*t, path[i-1][1]+(path[i][1]-path[i-1][1])*t]);
+      const t = (dist - acc) / seg;
+      out.push([
+        path[i - 1][0] + (path[i][0] - path[i - 1][0]) * t,
+        path[i - 1][1] + (path[i][1] - path[i - 1][1]) * t,
+      ]);
       return out;
     }
-    acc += seg; out.push(path[i]);
+    acc += seg;
+    out.push(path[i]);
   }
   return out;
 }
 
-function pathLen(path: [number,number][]): number {
+function pathLen(path: [number, number][]): number {
   let d = 0;
   for (let i = 1; i < path.length; i++)
-    d += haversineM(path[i-1][0],path[i-1][1],path[i][0],path[i][1]);
+    d += haversineM(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
   return d;
 }
 
 function gk(lng: number, lat: number, s: number): string {
-  return `${Math.floor(lng/s)},${Math.floor(lat/s)}`;
+  return `${Math.floor(lng / s)},${Math.floor(lat / s)}`;
 }
 
-function haversineM(lng1:number,lat1:number,lng2:number,lat2:number): number {
-  const R=6371000, toR=Math.PI/180;
-  const dφ=(lat2-lat1)*toR, dλ=(lng2-lng1)*toR;
-  const a=Math.sin(dφ/2)**2+Math.cos(lat1*toR)*Math.cos(lat2*toR)*Math.sin(dλ/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+function haversineM(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const R = 6371000,
+    toR = Math.PI / 180;
+  const dφ = (lat2 - lat1) * toR,
+    dλ = (lng2 - lng1) * toR;
+  const a =
+    Math.sin(dφ / 2) ** 2 + Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function lerpColor(a:string,b:string,t:number):string{
-  const pa=ph(a),pb=ph(b);
-  return `rgb(${rv(pa[0],pb[0],t)},${rv(pa[1],pb[1],t)},${rv(pa[2],pb[2],t)})`;
+function lerpColor(a: string, b: string, t: number): string {
+  const pa = ph(a),
+    pb = ph(b);
+  return `rgb(${rv(pa[0], pb[0], t)},${rv(pa[1], pb[1], t)},${rv(pa[2], pb[2], t)})`;
 }
-function rv(a:number,b:number,t:number){return Math.round(a+(b-a)*t);}
-function ph(h:string):[number,number,number]{
-  const x=h.replace('#','');
-  return [parseInt(x.slice(0,2),16),parseInt(x.slice(2,4),16),parseInt(x.slice(4,6),16)];
+function rv(a: number, b: number, t: number) {
+  return Math.round(a + (b - a) * t);
+}
+function ph(h: string): [number, number, number] {
+  const x = h.replace('#', '');
+  return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)];
 }

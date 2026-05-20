@@ -1,7 +1,7 @@
 import { Injectable, inject, OnDestroy, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { fromEvent, Subscription, interval } from 'rxjs';
-import { map, filter, tap } from 'rxjs/operators';
+import { map, filter } from 'rxjs/operators';
 import { AppState } from '../../app.state';
 import {
   SimCell,
@@ -20,7 +20,6 @@ export class SimulationService implements OnDestroy {
   private worker!: Worker;
   private tickSubscription: Subscription | null = null;
 
-  // Initialise worker and load city grid
   init(grid: SimCell[], seed: number): void {
     this.destroyWorker();
 
@@ -28,7 +27,6 @@ export class SimulationService implements OnDestroy {
       type: 'module',
     });
 
-    // Wire worker messages → RxJS stream
     fromEvent<MessageEvent>(this.worker, 'message')
       .pipe(
         map((e) => e.data as WorkerResponse),
@@ -36,11 +34,9 @@ export class SimulationService implements OnDestroy {
       )
       .subscribe((msg) => this.handleWorkerMessage(msg));
 
-    // Load grid into AppState
     this.state.grid.clear();
     grid.forEach((cell) => this.state.grid.set(cell.cellId, cell));
 
-    // Send INIT to worker
     const message: WorkerMessage = {
       type: 'INIT',
       payload: {
@@ -53,13 +49,11 @@ export class SimulationService implements OnDestroy {
     this.worker.postMessage(message);
   }
 
-  //Start tick loop
   start(): void {
     if (this.tickSubscription) this.tickSubscription.unsubscribe();
 
     this.state.setStatus(statusConstant.running);
 
-    // RxJS interval drives the worker — one TICK message per interval
     this.tickSubscription = interval(this.state.tickSpeed())
       .pipe(
         filter(() => this.state.isRunning()),
@@ -70,7 +64,6 @@ export class SimulationService implements OnDestroy {
       });
   }
 
-  // Pause
   pause(): void {
     this.state.setStatus(statusConstant.paused);
     this.worker?.postMessage({ type: 'PAUSE' } satisfies WorkerMessage);
@@ -78,13 +71,11 @@ export class SimulationService implements OnDestroy {
     this.tickSubscription = null;
   }
 
-  // Resume
   resume(): void {
     this.worker?.postMessage({ type: 'RESUME' } satisfies WorkerMessage);
     this.start();
   }
 
-  //Change speed — restart interval at new rate
   setSpeed(speedMs: number): void {
     this.state.setSpeed(speedMs as any);
     if (this.state.isRunning()) {
@@ -93,31 +84,24 @@ export class SimulationService implements OnDestroy {
     }
   }
 
-  // Reset everything
   reset(): void {
     this.pause();
     this.destroyWorker();
     this.state.resetState();
   }
 
-  // Handle all messages coming back from the worker
   private handleWorkerMessage(msg: WorkerResponse): void {
     switch (msg.type) {
       case 'INIT_COMPLETE': {
-        // Only drop to configuring if start() hasn't already been called.
-        // map-shell calls init() then start() synchronously, so the worker's
-        // async reply arrives after running is already set — don't clobber it.
         if (!this.state.isRunning()) {
           this.state.setStatus(statusConstant.configuring);
         }
         break;
       }
-
       case 'TICK_RESULT': {
         this.applyTickResult(msg.payload);
         break;
       }
-
       case 'SIM_ENDED': {
         this.applySimEnd(msg.payload);
         break;
@@ -125,23 +109,26 @@ export class SimulationService implements OnDestroy {
     }
   }
 
-  // Apply tick result to state and emit stream
   private applyTickResult(result: TickResult): void {
-    // 1. Mutate grid directly — not a signal
+    // Stop processing ticks if the sim has already ended — in-flight TICK_RESULT
+    // messages from the worker can arrive after SIM_ENDED and would overwrite the
+    // frozen stats, causing the verdict numbers to keep changing
+    if (this.state.isEnded()) return;
+
     result.updatedCells.forEach((cell) => {
       this.state.grid.set(cell.cellId, cell);
     });
 
-    // 2. Update stat signals
     this.state.updateStats(result.stats);
     this.state.incrementTick();
-
-    // 3. Emit to RxJS stream — MapService and DeckGL subscribe here
     this.state.tickResult$.next(result);
   }
 
-  //Simulation ended
   private applySimEnd(stats: SimStats): void {
+    // Freeze stats first so any concurrent TICK_RESULT that slips through
+    // cannot overwrite them — freezeStats writes to separate final* signals
+    this.state.freezeStats(stats, this.state.tick());
+
     this.state.updateStats(stats);
     this.state.setStatus(statusConstant.ended);
     this.state.simEnded$.next(stats);
@@ -149,7 +136,6 @@ export class SimulationService implements OnDestroy {
     this.tickSubscription = null;
   }
 
-  // Cleanup
   private destroyWorker(): void {
     if (this.worker) {
       this.worker.postMessage({ type: 'TERMINATE' } satisfies WorkerMessage);
