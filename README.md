@@ -186,7 +186,7 @@ Contributions are welcome! Whether you want to tweak infection rates, add new si
 
 ## 🧟 Fun Facts
 
-- The live app title is a reference to **Resident Evil 4** — *"Leon, these residents are evil!"*
+- The live app title is a meme reference to **Resident Evil 4** — *"Leon, these residents are evil!"*
 - The H3 grid resolution is carefully chosen to balance performance vs. simulation fidelity — too fine and your browser joins the undead
 - The `seedrandom` library means two people can share the exact same apocalypse by sharing a seed value
 - The simulation runs entirely **client-side** — no backend, no server, just your browser GPU fighting the horde
